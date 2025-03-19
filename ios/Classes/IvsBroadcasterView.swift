@@ -592,7 +592,8 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         lenses.append(8)
         let discoverySession = AVCaptureDevice.DiscoverySession(
             deviceTypes: [
-                .builtInTelephotoCamera
+                .builtInTelephotoCamera,
+                .builtInUltraWideCamera
             ], mediaType: .video, position: .unspecified)
         for device in discoverySession.devices {
             switch device.deviceType {
