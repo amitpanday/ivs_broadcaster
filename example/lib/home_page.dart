@@ -105,6 +105,13 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           IconButton(
+            onPressed: () async {
+              await ivsBroadcaster
+                  ?.updateCameraLens(IOSCameraLens.UltraWideCamera);
+            },
+            icon: const Icon(Icons.camera),
+          ),
+          IconButton(
             onPressed: () {
               ivsBroadcaster?.setFocusMode(FocusMode.Auto);
             },
