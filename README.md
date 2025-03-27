@@ -13,7 +13,9 @@
   - [Player](#player)
 - [Methods for Broadcasting](#methods-for-broadcasting)
 - [Methods for Player](#methods-for-player)
+- [Listeners for Broadcasting](#listeners-for-broadcasting)
 - [Listeners for Player](#listeners-for-player)
+- [Additional Features](#additional-features)
 
 ## Getting Started
 
@@ -55,7 +57,8 @@ To use this package, you need an AWS account with an IVS channel set up. Follow 
 To use the broadcaster, initialize it and add `BroadcaterPreview` to your widget tree:
 
 ```dart
-import 'package:ivs_broadcaster/ivs_broadcaster.dart';
+import 'package:ivs_broadcaster/Broadcaster/ivs_broadcaster.dart';
+import 'package:ivs_broadcaster/Broadcaster/Widgets/preview_widget.dart';
 
 IvsBroadcaster? ivsBroadcaster;
 
@@ -70,7 +73,6 @@ void initState() {
 child: BroadcaterPreview(),
 ...
 ```
-
 
 ### Player
 
@@ -98,9 +100,6 @@ child: IvsPlayerView(
 ...
 ```
 
-
-This will provide a preview of the camera.
-
 ## Methods for Broadcasting
 
 - **`Future<bool> requestPermissions();`**  
@@ -123,21 +122,23 @@ This will provide a preview of the camera.
 - **`Future<void> changeCamera(CameraType cameraType);`**  
   Change the camera being used for broadcasting.
 
-- **Listening to Broadcast State, Quality, and Network Health:**
+- **`Future<void> zoomCamera(double scale);`**  
+  Adjust the camera zoom level.
 
-    ```dart
-    ivsBroadcaster!.broadcastState.stream.listen((event) {
-        log(event.name.toString());
-    });
+- **`Future<ZoomFactor> getZoomFactor();`**  
+  Retrieve the minimum and maximum zoom levels.
 
-    ivsBroadcaster!.broadcastQuality.stream.listen((event) {
-        log(event.name.toString());
-    });
+- **`Future<void> updateCameraLens(IOSCameraLens lens);`**  
+  Update the camera lens (e.g., UltraWide, Wide, etc.).
 
-    ivsBroadcaster!.broadcastHealth.stream.listen((event) {
-        log(event.name.toString());
-    });
-    ```
+- **`Future<void> captureVideo({required int seconds});`**  
+  Capture a local video for a specified duration.
+
+- **`Future<void> setFocusMode(FocusMode mode);`**  
+  Set the camera's focus mode.
+
+- **`Future<void> setFocusPoint(Offset point);`**  
+  Set the focus point on the screen.
 
 ## Methods for Player
 
@@ -174,6 +175,23 @@ This will provide a preview of the camera.
 - **`Future<Duration> getPosition();`**  
   Get the current playback position.
 
+## Listeners for Broadcasting
+
+- **`Stream<BroadCastState> broadcastState;`**  
+  Listen to the broadcast state (e.g., CONNECTED, CONNECTING).
+
+- **`Stream<BroadCastQuality> broadcastQuality;`**  
+  Listen to the broadcast quality.
+
+- **`Stream<BroadCastHealth> broadcastHealth;`**  
+  Listen to the network health during broadcasting.
+
+- **`Stream<Offset> focusPoint;`**  
+  Listen to the focus point updates.
+
+- **`Stream<RetryState> retryState;`**  
+  Listen to retry state changes during broadcasting.
+
 ## Listeners for Player
 
 - **`StreamController<Duration> positionStream = StreamController.broadcast();`**  
@@ -196,3 +214,27 @@ This will provide a preview of the camera.
 
 - **`StreamController<bool> isAutoQualityStream = StreamController.broadcast();`**  
   Stream for automatic quality adjustment status.
+
+## Additional Features
+
+- **Zoom Control:**  
+  Use pinch gestures to zoom in and out during broadcasting.
+
+- **Camera Switching:**  
+  Switch between front and back cameras.
+
+- **Focus Control:**  
+  Set focus points and modes for better video quality.
+
+- **Retry Mechanism:**  
+  Automatically retry broadcasting in case of network issues.
+
+- **Video Capture:**  
+  Capture and save local videos during broadcasting.
+
+- **Customizable UI:**  
+  Modify the UI elements like buttons and overlays to fit your app's design.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
