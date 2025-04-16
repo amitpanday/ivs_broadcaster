@@ -55,7 +55,11 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         _eventChannel.setStreamHandler(self)
         let tapGestureRecognizer = UITapGestureRecognizer(
             target: self, action: #selector(setFocusPoint(_:)))
+        let zoomGestureRecognizer = UIPinchGestureRecognizer(
+            target: self, action: #selector(setZoom(_:)))
+        zoomGestureRecognizer.cancelsTouchesInView = false
         previewView.addGestureRecognizer(tapGestureRecognizer)
+        previewView.addGestureRecognizer(zoomGestureRecognizer)
     }
 
     private var queue = DispatchQueue(label: "media-queue")
@@ -339,6 +343,29 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
 
     func normalizePoint(_ point: CGPoint, size: CGSize) -> CGPoint {
         return CGPoint(x: point.x / size.width, y: point.y / size.height)
+    }
+    
+    private var currentZoomFactor: CGFloat = 1.0 // Property to store the zoom factor
+
+    @objc func setZoom(_ gestureRecognizer: UIPinchGestureRecognizer) {
+        guard let videoDevice = videoDevice else {
+            print("No Video Device Available")
+            return
+        }
+        print("Camera Zoom is \(gestureRecognizer.scale)")
+        do {
+            try videoDevice.lockForConfiguration()
+            let zoomFactor = max(
+                1.0, min(gestureRecognizer.scale * currentZoomFactor, videoDevice.activeFormat.videoMaxZoomFactor))
+            videoDevice.videoZoomFactor = zoomFactor
+            videoDevice.unlockForConfiguration()
+            
+            if gestureRecognizer.state == .ended {
+                currentZoomFactor = zoomFactor // Store the zoom factor when gesture ends
+            }
+        } catch {
+            print("Error setting zoom factor: \(error)")
+        }
     }
 
     @objc func setFocusPoint(_ gestureRecognizer: UITapGestureRecognizer) {

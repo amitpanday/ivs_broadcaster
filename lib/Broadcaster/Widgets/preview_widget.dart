@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -40,9 +42,14 @@ class _BroadcaterPreviewState extends State<BroadcaterPreview>
       );
     } else if (Platform.isIOS) {
       // Create an iOS-specific view for the broadcaster.
-      _platformView = const UiKitView(
+      _platformView = UiKitView(
         viewType: 'ivs_broadcaster',
-        creationParamsCodec: StandardMessageCodec(),
+        creationParamsCodec: const StandardMessageCodec(),
+        gestureRecognizers: {
+          Factory<OneSequenceGestureRecognizer>(
+            () => ScaleGestureRecognizer(),
+          ),
+        },
       );
     } else {
       // Display an error message if the platform is not supported.
