@@ -1,3 +1,6 @@
+## 1.0.1
+  * Added Internal Zoom for ivs camera
+
 ## 1.0.0
   * Feature: getZoomFactor - Get Max and Min Camera Zoom
   * Feature: getAvailableCameraLenses- Get Available Camera Lenses
