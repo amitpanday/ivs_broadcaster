@@ -170,6 +170,10 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
     private let METHOD_SEND_TIME_METADATA = "sendTimeMetaData"
     private let METHOD_SET_FOCUS_POINT = "setFocusPoint"
 
+    private var initialZoomScale: CGFloat = 1.0
+    private var currentZoomFactor: CGFloat = 1.0
+
+
     // Define constants for argument keys
     private let ARG_IMGSET = "imgset"
     private let ARG_STREAM_KEY = "streamKey"
@@ -343,8 +347,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
     func normalizePoint(_ point: CGPoint, size: CGSize) -> CGPoint {
         return CGPoint(x: point.x / size.width, y: point.y / size.height)
     }
-    
-    private var currentZoomFactor: CGFloat = 1.0 // Property to store the zoom factor
+     
 
     @objc func setZoom(_ gestureRecognizer: UIPinchGestureRecognizer) {
         guard let videoDevice = videoDevice else {
@@ -357,31 +360,41 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         let newScale = gestureRecognizer.scale
 
         switch gestureRecognizer.state {
-        case .began, .changed:
+        case .began:
+            initialZoomScale = currentZoomFactor
+        case .changed:
             do {
                 try videoDevice.lockForConfiguration()
                 
                 let maxZoom = videoDevice.activeFormat.videoMaxZoomFactor
                 let minZoom: CGFloat = 1.0
-                let desiredZoomFactor = max(minZoom, min(newScale * currentZoomFactor, maxZoom))
                 
-                videoDevice.videoZoomFactor = desiredZoomFactor
+                // Calculate new zoom factor
+                let desiredZoomFactor = initialZoomScale * gestureRecognizer.scale
+                let clampedZoomFactor = max(minZoom, min(desiredZoomFactor, maxZoom))
+                
+                // Apply smooth zoom transition
+                let zoomRamp = 1.0 // Adjust this value to control zoom smoothness
+                let smoothZoomFactor = currentZoomFactor + (clampedZoomFactor - currentZoomFactor) * zoomRamp
+                
+                videoDevice.videoZoomFactor = smoothZoomFactor
+                currentZoomFactor = smoothZoomFactor
+                
                 videoDevice.unlockForConfiguration()
                 
-                print("🔍 Zooming: \(desiredZoomFactor)x")
+                print("🔍 Zooming: \(smoothZoomFactor)x")
             } catch {
                 print("❌ Failed to set zoom factor: \(error.localizedDescription)")
             }
-
+            
         case .ended:
-            let finalScale = gestureRecognizer.scale
-            let finalZoomFactor = max(1.0, min(finalScale * currentZoomFactor, videoDevice.activeFormat.videoMaxZoomFactor))
-            currentZoomFactor = finalZoomFactor
+            // Store the final zoom factor
+            currentZoomFactor = videoDevice.videoZoomFactor
             print("✅ Final Zoom Set To: \(currentZoomFactor)x")
-
+            
         default:
             break
-        }
+        } 
     }
 
 
