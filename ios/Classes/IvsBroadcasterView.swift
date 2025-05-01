@@ -149,6 +149,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         let zoom = max(
             1.0,
             min(value, self.videoDevice?.activeFormat.videoMaxZoomFactor ?? 0))
+        self.currentZoomFactor = zoom
         self.videoDevice?.videoZoomFactor = zoom
         self.videoDevice?.unlockForConfiguration()
     }
@@ -357,8 +358,6 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
 //        Print number of fingers
         let numberOfTouches = gestureRecognizer.numberOfTouches
         print("Number of fingers: \(numberOfTouches)")
-        let newScale = gestureRecognizer.scale
-
         switch gestureRecognizer.state {
         case .began:
             initialZoomScale = currentZoomFactor
@@ -366,7 +365,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
             do {
                 try videoDevice.lockForConfiguration()
                 
-                let maxZoom = videoDevice.activeFormat.videoMaxZoomFactor
+                let maxZoom = /*videoDevice.activeFormat.videoMaxZoomFactor*/ 10.0
                 let minZoom: CGFloat = 1.0
                 
                 // Calculate new zoom factor
@@ -376,7 +375,8 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
                 // Apply smooth zoom transition
                 let zoomRamp = 1.0 // Adjust this value to control zoom smoothness
                 let smoothZoomFactor = currentZoomFactor + (clampedZoomFactor - currentZoomFactor) * zoomRamp
-                
+                let data = ["zoom": smoothZoomFactor]
+                self._eventSink!(data)
                 videoDevice.videoZoomFactor = smoothZoomFactor
                 currentZoomFactor = smoothZoomFactor
                 
@@ -990,7 +990,7 @@ extension IvsBroadcasterView: IVSMicrophoneDelegate {
             try config.video.setMinBitrate(1_500_000)  // 1.5 Mbps
             try config.video.setInitialBitrate(2_500_000)  // 2.5 Mbps
             try config.video.setTargetFramerate(30)
-            try config.video.setKeyframeInterval(2)
+            try config.video.setKeyframeInterval(2) 
         }
         // Set audio bitrate
         try config.audio.setBitrate(128000)  // 128 kbps
