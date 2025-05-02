@@ -56,8 +56,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         let tapGestureRecognizer = UITapGestureRecognizer(
             target: self, action: #selector(setFocusPoint(_:)))
         let zoomGestureRecognizer = UIPinchGestureRecognizer(
-            target: self, action: #selector(setZoom(_:)))
-        zoomGestureRecognizer.cancelsTouchesInView = false
+            target: self, action: #selector(setZoom(_:))) 
         previewView.addGestureRecognizer(tapGestureRecognizer)
         previewView.addGestureRecognizer(zoomGestureRecognizer)
     }
@@ -150,6 +149,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         let zoom = max(
             1.0,
             min(value, self.videoDevice?.activeFormat.videoMaxZoomFactor ?? 0))
+        self.currentZoomFactor = zoom
         self.videoDevice?.videoZoomFactor = zoom
         self.videoDevice?.unlockForConfiguration()
     }
@@ -170,6 +170,10 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
     private let METHOD_STOP_VIDEO_CAPTURE = "stopVideoCapture"
     private let METHOD_SEND_TIME_METADATA = "sendTimeMetaData"
     private let METHOD_SET_FOCUS_POINT = "setFocusPoint"
+
+    private var initialZoomScale: CGFloat = 1.0
+    private var currentZoomFactor: CGFloat = 1.0
+
 
     // Define constants for argument keys
     private let ARG_IMGSET = "imgset"
@@ -344,29 +348,55 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
     func normalizePoint(_ point: CGPoint, size: CGSize) -> CGPoint {
         return CGPoint(x: point.x / size.width, y: point.y / size.height)
     }
-    
-    private var currentZoomFactor: CGFloat = 1.0 // Property to store the zoom factor
+     
 
     @objc func setZoom(_ gestureRecognizer: UIPinchGestureRecognizer) {
         guard let videoDevice = videoDevice else {
-            print("No Video Device Available")
+            print("⚠️ Video device unavailable.")
             return
         }
-        print("Camera Zoom is \(gestureRecognizer.scale)")
-        do {
-            try videoDevice.lockForConfiguration()
-            let zoomFactor = max(
-                1.0, min(gestureRecognizer.scale * currentZoomFactor, videoDevice.activeFormat.videoMaxZoomFactor))
-            videoDevice.videoZoomFactor = zoomFactor
-            videoDevice.unlockForConfiguration()
-            
-            if gestureRecognizer.state == .ended {
-                currentZoomFactor = zoomFactor // Store the zoom factor when gesture ends
+//        Print number of fingers
+        let numberOfTouches = gestureRecognizer.numberOfTouches
+        print("Number of fingers: \(numberOfTouches)")
+        switch gestureRecognizer.state {
+        case .began:
+            initialZoomScale = currentZoomFactor
+        case .changed:
+            do {
+                try videoDevice.lockForConfiguration()
+                
+                let maxZoom = /*videoDevice.activeFormat.videoMaxZoomFactor*/ 10.0
+                let minZoom: CGFloat = 1.0
+                
+                // Calculate new zoom factor
+                let desiredZoomFactor = initialZoomScale * gestureRecognizer.scale
+                let clampedZoomFactor = max(minZoom, min(desiredZoomFactor, maxZoom))
+                
+                // Apply smooth zoom transition
+                let zoomRamp = 1.0 // Adjust this value to control zoom smoothness
+                let smoothZoomFactor = currentZoomFactor + (clampedZoomFactor - currentZoomFactor) * zoomRamp
+                let data = ["zoom": smoothZoomFactor]
+                self._eventSink!(data)
+                videoDevice.videoZoomFactor = smoothZoomFactor
+                currentZoomFactor = smoothZoomFactor
+                
+                videoDevice.unlockForConfiguration()
+                
+                print("🔍 Zooming: \(smoothZoomFactor)x")
+            } catch {
+                print("❌ Failed to set zoom factor: \(error.localizedDescription)")
             }
-        } catch {
-            print("Error setting zoom factor: \(error)")
-        }
+            
+        case .ended:
+            // Store the final zoom factor
+            currentZoomFactor = videoDevice.videoZoomFactor
+            print("✅ Final Zoom Set To: \(currentZoomFactor)x")
+            
+        default:
+            break
+        } 
     }
+
 
     @objc func setFocusPoint(_ gestureRecognizer: UITapGestureRecognizer) {
         guard let videoDevice = videoDevice else {
@@ -960,7 +990,7 @@ extension IvsBroadcasterView: IVSMicrophoneDelegate {
             try config.video.setMinBitrate(1_500_000)  // 1.5 Mbps
             try config.video.setInitialBitrate(2_500_000)  // 2.5 Mbps
             try config.video.setTargetFramerate(30)
-            try config.video.setKeyframeInterval(2)
+            try config.video.setKeyframeInterval(2) 
         }
         // Set audio bitrate
         try config.audio.setBitrate(128000)  // 128 kbps

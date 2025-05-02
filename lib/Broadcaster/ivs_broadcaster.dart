@@ -43,6 +43,7 @@ class IvsBroadcaster {
 
   /// Focus Point Stream Controller
   StreamController<Offset> focusPoint = StreamController<Offset>.broadcast();
+  StreamController<double> zoomStream = StreamController<double>.broadcast();
 
   /// An instance of the platform-specific broadcaster.
   final broadcater = IvsBroadcasterPlatform.instance;
@@ -100,6 +101,10 @@ class IvsBroadcaster {
         final data = settings["foucsPoint"].toString().split("_");
         final offset = Offset(double.parse(data[0]), double.parse(data[1]));
         focusPoint.add(offset);
+      }
+      if (settings.containsKey("zoom")) {
+        final zoom = double.parse(settings["zoom"].toString());
+        zoomStream.add(zoom);
       }
       if (settings.containsKey('isRecording')) {
         onVideoCapturingStream.add(
