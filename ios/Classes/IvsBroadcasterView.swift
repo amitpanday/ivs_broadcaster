@@ -986,9 +986,10 @@ extension IvsBroadcasterView: IVSMicrophoneDelegate {
 
         default:
             try config.video.setSize(CGSize(width: 1920, height: 1080))
-            try config.video.setMaxBitrate(8_500_000)  // 8.5 Mbps
-            try config.video.setMinBitrate(1_500_000)  // 1.5 Mbps
-            try config.video.setInitialBitrate(2_500_000)  // 2.5 Mbps
+//            try config.video.setMaxBitrate(8_500_000)  // 8.5 Mbps
+//            try config.video.setMinBitrate(1_500_000)  // 1.5 Mbps
+//            try config.video.setInitialBitrate(2_500_000)  // 2.5 Mbps
+            config.video.useAutoBitrate = true
             try config.video.setTargetFramerate(30)
             try config.video.setKeyframeInterval(2) 
         }
