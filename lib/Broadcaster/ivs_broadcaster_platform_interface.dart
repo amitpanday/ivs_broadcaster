@@ -1,3 +1,4 @@
+import 'package:ivs_broadcaster/Broadcaster/Classes/camera_brightness.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import '../helpers/enums.dart';
@@ -117,4 +118,8 @@ abstract class IvsBroadcasterPlatform extends PlatformInterface {
   Future<void> captureVideo(int seconds);
 
   Future<void> stopVideoCapture();
+
+  Future<CameraBrightness> getCameraBrightness();
+
+  Future<void> setCameraBrightness(CameraBrightness brightness);
 }

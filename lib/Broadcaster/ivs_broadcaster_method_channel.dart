@@ -3,6 +3,7 @@ import 'dart:developer';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:ivs_broadcaster/Broadcaster/Classes/camera_brightness.dart';
 import 'package:ivs_broadcaster/helpers/enums.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -262,6 +263,31 @@ class MethodChannelIvsBroadcaster extends IvsBroadcasterPlatform {
       await methodChannel.invokeMethod("stopVideoCapture");
     } catch (e) {
       throw Exception("$e [Stop Video Capture]");
+    }
+  }
+
+  @override
+  Future<CameraBrightness> getCameraBrightness() async {
+    try {
+      final Map<Object?, Object?> result =
+          await methodChannel.invokeMethod("getCameraBrightness");
+      return CameraBrightness.fromJson(Map<String, dynamic>.from(result));
+    } catch (e) {
+      throw Exception("$e [Get Camera Brightness]");
+    }
+  }
+
+  @override
+  Future<void> setCameraBrightness(CameraBrightness brightness) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        "setCameraBrightness",
+        <String, dynamic>{
+          'brightness': brightness.brightness,
+        },
+      );
+    } catch (e) {
+      throw Exception("$e [Set Camera Brightness]");
     }
   }
 }

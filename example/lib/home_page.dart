@@ -6,6 +6,7 @@ import 'dart:developer';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:ivs_broadcaster/Broadcaster/Classes/camera_brightness.dart';
 import 'package:ivs_broadcaster/Broadcaster/Classes/video_capturing_model.dart';
 import 'package:ivs_broadcaster/Broadcaster/Widgets/preview_widget.dart';
 import 'package:ivs_broadcaster/Broadcaster/ivs_broadcaster.dart';
@@ -19,12 +20,39 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  ValueNotifier<CameraBrightness> cameraBrightness = ValueNotifier(
+      CameraBrightness(brightness: 0, minBrightness: 0, maxBrightness: 1));
+
+  // Future<void> _zoomCamera(double scale) async {
+  //   await ivsBroadcaster?.zoomCamera(scale);
+  // }
+
+  ValueNotifier<IOSCameraLens> currentCamera =
+      ValueNotifier(IOSCameraLens.DefaultCamera);
+
+  IvsBroadcaster? ivsBroadcaster;
   // String key = "sk_us-east-************************************";
   // String url = "rtmps:-***************************************";
   String key = "sk_us-east-1_rDaEh55crJgC_JuCoeGBlcRIa1qnlkirfuwjSjuNKmy";
+
+  double maxZoom = 4.0; // Maximum zoom level
+  // final double _scale = 1.0;
+  // final double _previousScale = 1.0;
+  double minZoom = 1.0; // Minimum zoom level
+
+  IvsQuality quality = IvsQuality.q1080;
+  ValueNotifier<bool> showBox = ValueNotifier(false);
+  Timer? timer;
   String url = "rtmps://7453a0e95db4.global-contribute.live-video.net:443/app/";
 
-  IvsBroadcaster? ivsBroadcaster;
+  @override
+  void dispose() {
+    ivsBroadcaster?.stopBroadcast();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -46,18 +74,21 @@ class _HomePageState extends State<HomePage> {
     ivsBroadcaster!.retryState.stream.listen((event) {
       log(event.name.toString(), name: "IVS Broadcaster Retry");
     });
+    ivsBroadcaster!.focusPoint.stream.listen((event) {
+      log("Focus Point: $event", name: "IVS Broadcaster Focus Point");
+      showBox.value = true;
+      startTimer();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       init();
     });
   }
 
-  @override
-  void dispose() {
-    ivsBroadcaster?.stopBroadcast();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
-    super.dispose();
+  void startTimer() {
+    timer?.cancel();
+    timer = Timer(const Duration(seconds: 2), () {
+      showBox.value = false;
+    });
   }
 
   init() async {
@@ -73,21 +104,22 @@ class _HomePageState extends State<HomePage> {
       maxZoom = zoomFactor.maxZoom.toDouble();
       minZoom = zoomFactor.minZoom.toDouble();
     }
+    Future.delayed(const Duration(seconds: 5), () async {
+      final cameraBrightness = await ivsBroadcaster?.getCameraBrightness();
+      if (cameraBrightness != null) {
+        log("min: ${cameraBrightness.minBrightness}, max: ${cameraBrightness.maxBrightness}, current: ${cameraBrightness.brightness}");
+        this.cameraBrightness.value = cameraBrightness;
+      }
+    });
   }
 
-  final double _scale = 1.0;
-  final double _previousScale = 1.0;
-  double minZoom = 1.0; // Minimum zoom level
-  double maxZoom = 4.0; // Maximum zoom level
-  IvsQuality quality = IvsQuality.q1080;
-
-  Future<void> _zoomCamera(double scale) async {
-    // Call your zoom function here
-    await ivsBroadcaster?.zoomCamera(scale);
+  showSnackBar(BuildContext content, String message) {
+    ScaffoldMessenger.of(content).showSnackBar(
+      SnackBar(
+        content: Text(message),
+      ),
+    );
   }
-
-  ValueNotifier<IOSCameraLens> currentCamera =
-      ValueNotifier(IOSCameraLens.DefaultCamera);
 
   @override
   Widget build(BuildContext context) {
@@ -142,16 +174,6 @@ class _HomePageState extends State<HomePage> {
           const Center(
             child: CircularProgressIndicator(),
           ),
-          // GestureDetector(
-          //   onScaleStart: (ScaleStartDetails details) {
-          //     _previousScale = _scale;
-          //     log("Started $_previousScale");
-          //   },
-          //   onScaleUpdate: (ScaleUpdateDetails details) async {
-          //     _scale = (_previousScale * details.scale).clamp(minZoom, maxZoom);
-          //     _zoomCamera(_scale);
-          //   },
-          // ),
           const BroadcaterPreview(),
           Positioned(
             height: 150,
@@ -307,33 +329,61 @@ class _HomePageState extends State<HomePage> {
               },
             ),
           ),
-          StreamBuilder<Offset>(
-            stream: ivsBroadcaster?.focusPoint.stream,
-            builder: (context, snapshot) {
-              final value = snapshot.data ?? const Offset(0, 0);
-              log(value.toString());
-              return FutureBuilder<bool>(
-                future: Future.delayed(const Duration(seconds: 2))
-                    .then((value) => false),
-                builder: (context, showBox) {
-                  final show = showBox.connectionState == ConnectionState.done
-                      ? false
-                      : true;
+          ValueListenableBuilder<bool>(
+            valueListenable: showBox,
+            builder: (context, show, child) {
+              return StreamBuilder<Offset>(
+                stream: ivsBroadcaster?.focusPoint.stream,
+                builder: (context, snapshot) {
+                  final value = snapshot.data ?? const Offset(0, 0);
+                  if (!show) return const SizedBox.shrink();
                   return Positioned(
-                    top: value.dy - 25,
+                    top: value.dy - 80,
                     left: value.dx - 25,
-                    child: AnimatedContainer(
-                      duration: Durations.short4,
-                      height: 50,
-                      width: 50,
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: show
-                              ? Colors.white.withOpacity(0.5)
-                              : Colors.transparent,
-                          width: 2,
+                    child: Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: Durations.short4,
+                          height: 50,
+                          width: 50,
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.5),
+                              width: 2,
+                            ),
+                          ),
                         ),
-                      ),
+                        // Vertical Slider
+                        RotatedBox(
+                          quarterTurns: 3,
+                          child: ValueListenableBuilder<CameraBrightness>(
+                            valueListenable: cameraBrightness,
+                            builder: (context, snapshot, child) {
+                              return Slider(
+                                onChangeEnd: (value) {
+                                  startTimer();
+                                },
+                                value: (snapshot.brightness).toDouble(),
+                                min: snapshot.minBrightness.toDouble(),
+                                max: snapshot.maxBrightness.toDouble(),
+                                activeColor: Colors.white,
+                                onChanged: (value) {
+                                  startTimer();
+                                  log("Brightness: $value");
+                                  cameraBrightness.value = CameraBrightness(
+                                    brightness: value.toInt(),
+                                    minBrightness: snapshot.minBrightness,
+                                    maxBrightness: snapshot.maxBrightness,
+                                  );
+                                  ivsBroadcaster?.setCameraBrightness(
+                                    cameraBrightness.value,
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -343,7 +393,7 @@ class _HomePageState extends State<HomePage> {
           StreamBuilder<RetryState>(
             stream: ivsBroadcaster?.retryState.stream,
             builder: (context, snapshot) {
-              if (snapshot.hasData) {
+              if (snapshot.hasData && snapshot.data != RetryState.NotRetrying) {
                 return Container(
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.5),
@@ -357,14 +407,6 @@ class _HomePageState extends State<HomePage> {
             },
           ),
         ],
-      ),
-    );
-  }
-
-  showSnackBar(BuildContext content, String message) {
-    ScaffoldMessenger.of(content).showSnackBar(
-      SnackBar(
-        content: Text(message),
       ),
     );
   }

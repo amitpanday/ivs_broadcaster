@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:ivs_broadcaster/Broadcaster/Classes/camera_brightness.dart';
 import 'package:ivs_broadcaster/Broadcaster/Classes/video_capturing_model.dart';
 import 'package:ivs_broadcaster/Broadcaster/Classes/zoom_factor.dart';
 import 'package:ivs_broadcaster/Broadcaster/ivs_broadcaster_platform_interface.dart';
@@ -264,5 +265,17 @@ class IvsBroadcaster {
   /// Returns a [Future] that completes when the video capture has stopped.
   Future<void> stopVideoCapture() async {
     await broadcater.stopVideoCapture();
+  }
+
+  /// Gets the current camera brightness settings.
+  ///
+  /// Returns a [Future] that completes with the current [CameraBrightness].
+  Future<CameraBrightness> getCameraBrightness() async {
+    return await broadcater.getCameraBrightness();
+  }
+
+  /// Set the camera brightness to the specified value.
+  Future<void> setCameraBrightness(CameraBrightness brightness) async {
+    return await broadcater.setCameraBrightness(brightness);
   }
 }
