@@ -213,4 +213,17 @@ class IvsPlayerMethodChannel extends IvsPlayerInterface {
       throw Exception("Unable to get the screenshot [Get Screenshot]");
     }
   }
+
+  @override
+  Future<void> disposeAllPlayers() async {
+    try {
+      await _methodChannel.invokeMethod("dispose");
+      // Cancel the player state subscription if it exists.
+      playerStateSubscription?.cancel();
+      playerStateSubscription = null;
+    } catch (e) {
+      log(e.toString());
+      throw Exception("Unable to dispose all players [Dispose All Players]");
+    }
+  }
 }

@@ -126,6 +126,9 @@ class IvsPlayerView: NSObject, FlutterPlatformView, FlutterStreamHandler , IVSPl
                 stopPlayer(playerId: playerId!)
             }
             result(true)
+        case "dispose" :
+            disposeAllPlayer()
+            result(true)
         case "mute":
             let playerId = self.playerId
             mutePlayer(playerId: playerId!)
@@ -146,7 +149,11 @@ class IvsPlayerView: NSObject, FlutterPlatformView, FlutterStreamHandler , IVSPl
             result(true)
         case "position":
             let playerId = self.playerId
-            result(getPosition(playerId: playerId!))
+            if (playerId != nil){
+                result(getPosition(playerId: playerId!)) 
+            } else{
+                result("0")
+            }
         case "qualities":
             let playerId = self.playerId
             if(playerId != nil){
@@ -343,6 +350,21 @@ class IvsPlayerView: NSObject, FlutterPlatformView, FlutterStreamHandler , IVSPl
         }
         selectPlayer(playerId: self.playerId!)
     }
+    
+    
+    func disposeAllPlayer() {
+        let keys = Array(players.keys)
+        for key in keys {
+            if let player = players[key] {
+                player.pause()
+                players.removeValue(forKey: key)
+                if let path = player.path?.absoluteString {
+                    playerViews.removeValue(forKey: path)
+                }
+            }
+        }
+    }
+
     
     func attachPreview(container: UIView, preview: UIView) {
         // Clear current view, and then attach the new view.

@@ -73,17 +73,21 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        let currentPTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        
         if output == videoOutput {
+            let currentPTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             self.videoPTS = currentPTS
             customImageSource?.onSampleBuffer(sampleBuffer)
         } else if output == audioOutput {
+            let currentPTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             self.audioPTS = currentPTS
             var timeDifference: Double = 0.0
             if let videoPTS = self.videoPTS, let audioPTS = self.audioPTS {
+                // Calculate time difference in milliseconds
                 timeDifference = CMTimeSubtract(videoPTS, audioPTS).seconds
             }
             if timeDifference < 0 {
+                print("Audio Time DIff: \(timeDifference)")
                 audioProcessingQueue.asyncAfter(deadline: .now() + abs(timeDifference)) {
                     self.customAudioSource?.onSampleBuffer(sampleBuffer)
                 }
@@ -979,16 +983,15 @@ extension IvsBroadcasterView: IVSMicrophoneDelegate {
                 try config.video.setMinBitrate(4_000_000)
                 try config.video.setInitialBitrate(5_000_000)
             default:
-                try config.video.setSize(CGSize(width: 1920, height: 1080))
-                try config.video.setMaxBitrate(3_000_000)
-                try config.video.setMinBitrate(1_000_000)
-                try config.video.setInitialBitrate(1_000_000)
-//                config.video.useAutoBitrate = true
-//                config.video.autoBitrateProfile = .fastIncrease
-            }
-            try config.video.setTargetFramerate(24)
-            try config.video.setKeyframeInterval(2)
-            try config.audio.setBitrate(128_000)
+                 try config.video.setSize(CGSize(width: 1920, height: 1080))
+                try config.video.setMaxBitrate(8_500_000)  // 8.5 Mbps
+                try config.video.setMinBitrate(2_500_000)  // 2.5 Mbps
+                try config.video.setInitialBitrate(5_000_000)  // 5 Mbps
+                try config.video.setTargetFramerate(30)
+                try config.video.setKeyframeInterval(2)
+            } 
+            try config.audio.setBitrate(96_000)
+            config.audio.setQuality(IVSBroadcastConfiguration.AudioQuality.medium)
             return config
         }
 }

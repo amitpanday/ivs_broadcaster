@@ -263,4 +263,12 @@ class IvsPlayer {
     }
     return qualities;
   }
+
+  /// Disposes all players and cleans up resources.
+  Future<void> disposeAllPlayers() async {
+    await _controller.disposeAllPlayers();
+    // Cancel the position stream subscription if it exists.
+    _positionStreamSubs?.cancel();
+    _positionStreamSubs = null;
+  }
 }

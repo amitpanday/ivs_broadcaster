@@ -105,4 +105,7 @@ abstract class IvsPlayerInterface extends PlatformInterface {
   /// Returns a [Future] that resolves to a [Uint8List] representing the path of the screenshot.
   ///
   Future<Uint8List> getThumbnail({String? url});
+
+  /// Dispose all the players.
+  Future<void> disposeAllPlayers();
 }

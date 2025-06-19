@@ -104,13 +104,6 @@ class _HomePageState extends State<HomePage> {
       maxZoom = zoomFactor.maxZoom.toDouble();
       minZoom = zoomFactor.minZoom.toDouble();
     }
-    Future.delayed(const Duration(seconds: 5), () async {
-      final cameraBrightness = await ivsBroadcaster?.getCameraBrightness();
-      if (cameraBrightness != null) {
-        log("min: ${cameraBrightness.minBrightness}, max: ${cameraBrightness.maxBrightness}, current: ${cameraBrightness.brightness}");
-        this.cameraBrightness.value = cameraBrightness;
-      }
-    });
   }
 
   showSnackBar(BuildContext content, String message) {
@@ -149,8 +142,14 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.camera),
           ),
           IconButton(
-            onPressed: () {
+            onPressed: () async {
               ivsBroadcaster?.setFocusMode(FocusMode.Auto);
+              final cameraBrightness =
+                  await ivsBroadcaster?.getCameraBrightness();
+              if (cameraBrightness != null) {
+                log("min: ${cameraBrightness.minBrightness}, max: ${cameraBrightness.maxBrightness}, current: ${cameraBrightness.brightness}");
+                this.cameraBrightness.value = cameraBrightness;
+              }
             },
             icon: const Icon(Icons.center_focus_strong),
           ),
@@ -359,26 +358,41 @@ class _HomePageState extends State<HomePage> {
                           child: ValueListenableBuilder<CameraBrightness>(
                             valueListenable: cameraBrightness,
                             builder: (context, snapshot, child) {
-                              return Slider(
-                                onChangeEnd: (value) {
-                                  startTimer();
-                                },
-                                value: (snapshot.brightness).toDouble(),
-                                min: snapshot.minBrightness.toDouble(),
-                                max: snapshot.maxBrightness.toDouble(),
-                                activeColor: Colors.white,
-                                onChanged: (value) {
-                                  startTimer();
-                                  log("Brightness: $value");
-                                  cameraBrightness.value = CameraBrightness(
-                                    brightness: value.toInt(),
-                                    minBrightness: snapshot.minBrightness,
-                                    maxBrightness: snapshot.maxBrightness,
-                                  );
-                                  ivsBroadcaster?.setCameraBrightness(
-                                    cameraBrightness.value,
-                                  );
-                                },
+                              return SliderTheme(
+                                data: SliderThemeData(
+                                  trackHeight: 2,
+                                  overlayColor: Colors.transparent,
+                                  thumbShape: SliderThumbIcon(
+                                    iconData: Icons.wb_sunny_outlined,
+                                    size: 30,
+                                    color: Colors.yellow.withOpacity(0.8),
+                                  ),
+                                  trackShape:
+                                      const RectangularSliderTrackShape(),
+                                  activeTrackColor: Colors.yellow,
+                                  inactiveTrackColor: Colors.yellow,
+                                  thumbColor: Colors.transparent,
+                                ),
+                                child: Slider(
+                                  onChangeEnd: (value) {
+                                    startTimer();
+                                  },
+                                  value: (snapshot.brightness).toDouble(),
+                                  min: snapshot.minBrightness.toDouble(),
+                                  max: snapshot.maxBrightness.toDouble(),
+                                  onChanged: (value) {
+                                    startTimer();
+                                    log("Brightness: $value");
+                                    cameraBrightness.value = CameraBrightness(
+                                      brightness: value.toInt(),
+                                      minBrightness: snapshot.minBrightness,
+                                      maxBrightness: snapshot.maxBrightness,
+                                    );
+                                    ivsBroadcaster?.setCameraBrightness(
+                                      cameraBrightness.value,
+                                    );
+                                  },
+                                ),
                               );
                             },
                           ),
@@ -409,5 +423,60 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+}
+
+class SliderThumbIcon extends SliderComponentShape {
+  final IconData iconData;
+  final double size;
+  final Color color;
+
+  SliderThumbIcon({
+    required this.iconData,
+    this.size = 24.0,
+    this.color = Colors.blue,
+  });
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) {
+    return Size(size, size);
+  }
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {
+    final Canvas canvas = context.canvas;
+
+    final TextSpan span = TextSpan(
+      text: String.fromCharCode(iconData.codePoint),
+      style: TextStyle(
+        fontSize: size,
+        fontFamily: iconData.fontFamily,
+        package: iconData.fontPackage,
+        color: color,
+      ),
+    );
+
+    final TextPainter tp = TextPainter(
+      text: span,
+      textAlign: TextAlign.center,
+      textDirection: textDirection,
+    );
+
+    tp.layout();
+    final Offset iconOffset = center - Offset(tp.width / 2, tp.height / 2);
+    tp.paint(canvas, iconOffset);
   }
 }
