@@ -97,6 +97,8 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         }
     }
     
+   
+    
     
     
     func checkOrGetPermission(
@@ -821,6 +823,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
     
     func startSession() {
         let captureSession = AVCaptureSession()
+        self.captureSession = captureSession
         captureSession.beginConfiguration()
         captureSession.sessionPreset = .high
         
@@ -860,8 +863,9 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
             captureSession.addInput(audioInput)
             let audioSession = AVAudioSession.sharedInstance()
             do {
-                try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
-                try audioSession.setPreferredIOBufferDuration(0.005)
+                try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetooth, .defaultToSpeaker])
+                try audioSession.setPreferredSampleRate(44100)
+                try audioSession.setPreferredIOBufferDuration(0.01)
                 try audioSession.setActive(true)
             } catch {
                 print("Failed to configure audio session: \(error)")
@@ -886,7 +890,7 @@ class IvsBroadcasterView: NSObject, FlutterPlatformView, FlutterStreamHandler,
         DispatchQueue.global(qos: .userInitiated).async {
             captureSession.startRunning()
         }
-        self.captureSession = captureSession
+        
     }
     
     func broadcastSession(
