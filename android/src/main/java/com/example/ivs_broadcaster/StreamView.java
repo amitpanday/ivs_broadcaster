@@ -1,13 +1,14 @@
 package com.example.ivs_broadcaster;
 
-
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -27,6 +28,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
@@ -37,6 +39,7 @@ import com.amazonaws.ivs.broadcast.BroadcastConfiguration;
 import com.amazonaws.ivs.broadcast.BroadcastException;
 import com.amazonaws.ivs.broadcast.BroadcastSession;
 import com.amazonaws.ivs.broadcast.Device;
+import com.amazonaws.ivs.broadcast.ImageDevice;
 import com.amazonaws.ivs.broadcast.ImagePreviewView;
 import com.amazonaws.ivs.broadcast.Presets;
 import com.amazonaws.ivs.broadcast.SurfaceSource;
@@ -70,12 +73,23 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     private CameraCaptureSession captureSession;
     private CaptureRequest.Builder captureRequestBuilder;
     private String defaultCameraType = "0"; // Default to rear camera
+    private ImagePreviewView previewView;
+    private int sensorOrientation = 0;
+    private int deviceRotation = Surface.ROTATION_0;
+    private Size cameraOutputSize;
+    private Size previewSize;
 
     private boolean isMuted = false;
 
     StreamView(Context context, BinaryMessenger messenger) {
         this.context = context;
         layout = new LinearLayout(context);
+        // Make sure the layout fills its parent
+        layout.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        layout.setBackgroundColor(Color.BLACK); // Less distracting than red
+
         mainHandler = new Handler(Looper.getMainLooper());
 
         MethodChannel methodChannel = new MethodChannel(messenger, "ivs_broadcaster");
@@ -89,6 +103,9 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
             }
             return true;
         });
+
+        // Get device rotation from the activity - update this dynamically
+        updateDeviceRotation();
     }
 
     @Override
@@ -100,6 +117,14 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     public void dispose() {
         stopBroadcast();
         releaseCamera();
+    }
+
+    // Method to update device rotation dynamically
+    private void updateDeviceRotation() {
+        if (context instanceof Activity) {
+            deviceRotation = ((Activity) context).getWindowManager().getDefaultDisplay().getRotation();
+            Log.d(TAG, "Device rotation updated to: " + deviceRotation);
+        }
     }
 
     // --- Method Names and Argument Keys ---
@@ -126,7 +151,6 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     private static final String ARG_LENS = "lens";
     private static final String ARG_TYPE = "type";
     private static final String ARG_SECONDS = "seconds";
-
 
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
@@ -279,14 +303,19 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         Map<String, Object> zoomData = new HashMap<>();
         try {
             CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-            if (cameraManager != null) {
-                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(defaultCameraType);
+            if (cameraManager != null && cameraDevice != null) {
+                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraDevice.getId());
                 Float maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
                 zoomData.put("minZoom", 1.0f);
                 zoomData.put("maxZoom", maxZoom != null ? maxZoom : 1.0f);
+            } else {
+                zoomData.put("minZoom", 1.0f);
+                zoomData.put("maxZoom", 1.0f);
             }
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error getting zoom factor", e);
+            zoomData.put("minZoom", 1.0f);
+            zoomData.put("maxZoom", 1.0f);
         }
         return zoomData;
     }
@@ -304,74 +333,218 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         this.autoReconnect = autoReconnect;
         this.quality = quality;
 
-        BroadcastConfiguration config = getConfig(quality);
-        config.autoReconnect.setEnabled(autoReconnect);
-        broadcastSession = new BroadcastSession(context, broadcastListener, config, Presets.Devices.MICROPHONE(context));
-        for (Device device : broadcastSession.listAttachedDevices()) {
-            if (device.getDescriptor().type == Device.Descriptor.DeviceType.MICROPHONE) {
-                audioDevice = (AudioDevice) device;
-            }
-        }
-        this.source = broadcastSession.createImageInputSource();
-        Surface ivsSurface = source.getInputSurface();
-        ImagePreviewView preview = broadcastSession.getPreviewView(BroadcastConfiguration.AspectMode.FILL);
-        preview.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
-        layout.addView(preview);
+        // Use standard broadcast configuration
+//        BroadcastConfiguration config = new   BroadcastConfiguration();
+//
+//        // Configure the mixer slot
+//        config.mixer.slots = new BroadcastConfiguration.Mixer.Slot[] {
+//                BroadcastConfiguration.Mixer.Slot.with(slot -> {
+//                    slot.setPreferredAudioInput(
+//                            Device.Descriptor.DeviceType.MICROPHONE);
+//                    slot.setPreferredVideoInput(
+//                            Device.Descriptor.DeviceType.USER_IMAGE);
+//                    slot.setMatchCanvasAspectMode(true);
+//                    slot.setName("custom");
+//                    return slot;
+//                }),
+//        };
+//
+//        config.autoReconnect.setEnabled(autoReconnect != null ? autoReconnect : false);
 
-        // **FIX:** Wait for the preview view to be laid out before starting the camera.
-        // This ensures we have valid dimensions to choose the correct preview size.
-        preview.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (v.getWidth() > 0 && v.getHeight() > 0) {
-                v.removeOnLayoutChangeListener( (View.OnLayoutChangeListener) v.getTag());
-                startCamera2(ivsSurface, v.getWidth(), v.getHeight());
-            }
-        });
+        try {
+//            broadcastSession = new BroadcastSession(context, broadcastListener, config, Presets.Devices.MICROPHONE(context));
+            broadcastSession = new BroadcastSession(context,
+                    broadcastListener,
+                    Presets.Configuration.STANDARD_PORTRAIT,
+                    Presets.Devices.BACK_CAMERA(context));
+
+            broadcastSession.awaitDeviceChanges(() -> {
+                for(Device device: broadcastSession.listAttachedDevices()) {
+                    if(device.getDescriptor().type == Device.Descriptor.DeviceType.CAMERA) {
+                        ImagePreviewView preview = ((ImageDevice)device).getPreviewView(BroadcastConfiguration.AspectMode.FILL);
+                        preview.setLayoutParams(new LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.MATCH_PARENT));
+                        layout.addView(preview);
+                    }
+                }
+            });
+//            this.source = broadcastSession.createImageInputSource();
+//
+//            for (Device device : broadcastSession.listAttachedDevices()) {
+//                if (device.getDescriptor().type == Device.Descriptor.DeviceType.MICROPHONE) {
+//                    audioDevice = (AudioDevice) device;
+//                }
+//                if (device.getDescriptor().type == Device.Descriptor.DeviceType.CAMERA) {
+//                    broadcastSession.getMixer().bind(device, "custom");
+//                }
+//            }
+//
+//
+//            if (source == null || source.getInputSurface() == null) {
+//                sendErrorEvent("Failed to create image input source or surface is null");
+//                return;
+//            }
+//
+////            Surface ivsSurface = source.getInputSurface();
+//
+//            previewView = broadcastSession.getPreviewView(BroadcastConfiguration.AspectMode.FIT);
+//            previewView.setLayoutParams(new LinearLayout.LayoutParams(
+//                    LinearLayout.LayoutParams.MATCH_PARENT,
+//                    LinearLayout.LayoutParams.MATCH_PARENT));
+//            previewView.setVisibility(View.VISIBLE);
+//            layout.addView(previewView);
+//
+//            previewView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+//                @Override
+//                public void onGlobalLayout() {
+//                    if (previewView.getWidth() > 0 && previewView.getHeight() > 0) {
+//                        previewView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+//                        Log.d(TAG, "PreviewView ready: " + previewView.getWidth() + "x" + previewView.getHeight());
+//
+//                        // Store preview dimensions
+//                        previewSize = new Size(previewView.getWidth(), previewView.getHeight());
+//
+//                        // Start camera with proper surface setup
+//                        startCamera2(ivsSurface, previewView.getWidth(), previewView.getHeight());
+//                    }
+//                }
+//            });
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting up broadcast session", e);
+            sendErrorEvent("Broadcast setup error: " + e.getMessage());
+        }
     }
 
-    // **FIX:** Updated to accept view dimensions and use chooseOptimalSize
+    private int getJpegOrientation() {
+        // Check if this is a front camera
+        boolean isFrontFacing = false;
+        try {
+            CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraDevice.getId());
+            Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+            isFrontFacing = lensFacing != null && lensFacing == CameraCharacteristics.LENS_FACING_FRONT;
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Error checking camera facing", e);
+        }
+
+        int rotationDegrees = getRotationDegrees(deviceRotation);
+        
+        int orientation;
+        if (isFrontFacing) {
+            // Front camera needs to account for mirroring
+            orientation = (sensorOrientation + rotationDegrees) % 360;
+            // Mirror horizontally for front camera
+            orientation = (360 - orientation) % 360;
+        } else {
+            // Back camera - standard calculation
+            orientation = (sensorOrientation - rotationDegrees + 360) % 360;
+        }
+        
+        Log.d(TAG, "Camera orientation calculation - sensor: " + sensorOrientation + 
+              ", device rotation: " + rotationDegrees + 
+              ", front facing: " + isFrontFacing + 
+              ", final orientation: " + orientation);
+        
+        return orientation;
+    }
+
     private void startCamera2(Surface ivsSurface, int viewWidth, int viewHeight) {
+        Log.d(TAG, "Starting camera with view dimensions: " + viewWidth + "x" + viewHeight);
+
+        if (ivsSurface == null || !ivsSurface.isValid()) {
+            Log.e(TAG, "IVS Surface is null or invalid");
+            sendErrorEvent("IVS Surface is not valid");
+            return;
+        }
+
         CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+
         try {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions((Activity) context, new String[]{Manifest.permission.CAMERA}, 100);
+                sendErrorEvent("Camera permission not granted");
                 return;
             }
 
-            CameraCharacteristics characteristics = manager.getCameraCharacteristics(defaultCameraType);
+            String cameraId = defaultCameraType;
+
+            // Map the camera type to actual facing direction for proper camera selection
+            if (defaultCameraType.equals("0") || defaultCameraType.equals("1")) {
+                int desiredFacing = defaultCameraType.equals("0") ?
+                        CameraCharacteristics.LENS_FACING_BACK :
+                        CameraCharacteristics.LENS_FACING_FRONT;
+
+                for (String id : manager.getCameraIdList()) {
+                    CameraCharacteristics characteristics = manager.getCameraCharacteristics(id);
+                    Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                    if (facing != null && facing == desiredFacing) {
+                        cameraId = id;
+                        Log.d(TAG, "Found camera ID " + id + " for facing direction " + 
+                              (desiredFacing == CameraCharacteristics.LENS_FACING_BACK ? "back" : "front"));
+                        break;
+                    }
+                }
+            }
+
+            Log.d(TAG, "Opening camera with ID: " + cameraId);
+            CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+            defaultCameraType = cameraId;
+
+            // Get camera sensor orientation
+            Integer orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            if (orientation != null) {
+                sensorOrientation = orientation;
+                Log.d(TAG, "Camera sensor orientation: " + sensorOrientation);
+            }
+
+            // Get optimal size for camera - choose based on view dimensions for proper aspect ratio
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if (map == null) {
-                Log.e(TAG, "Cannot get stream configuration map.");
-                return;
+
+            if (map != null) {
+                Size[] outputSizes = map.getOutputSizes(SurfaceTexture.class);
+
+                // Choose size that matches the view aspect ratio and orientation
+                cameraOutputSize = chooseOptimalSize(outputSizes, viewWidth, viewHeight);
+                Log.d(TAG, "Selected camera output size: " + cameraOutputSize.getWidth() + "x" + cameraOutputSize.getHeight());
             }
 
-            // **FIX:** Robustly choose the best preview size instead of just the first one.
-            Size previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class), viewWidth, viewHeight);
-            Log.i(TAG, "Selected Preview Size: " + previewSize.getWidth() + "x" + previewSize.getHeight());
-
-            manager.openCamera(defaultCameraType, new CameraDevice.StateCallback() {
+            manager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(@NonNull CameraDevice camera) {
+                    Log.d(TAG, "Camera opened successfully");
                     cameraDevice = camera;
                     createCaptureSession(ivsSurface);
                 }
 
                 @Override
                 public void onDisconnected(@NonNull CameraDevice camera) {
+                    Log.d(TAG, "Camera disconnected");
                     camera.close();
                     cameraDevice = null;
                 }
 
                 @Override
                 public void onError(@NonNull CameraDevice camera, int error) {
+                    Log.e(TAG, "Camera error: " + error);
                     camera.close();
                     cameraDevice = null;
-                    Log.e(TAG, "Camera error: " + error);
+                    sendErrorEvent("Camera error: " + error);
                 }
             }, mainHandler);
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Camera access exception: ", e);
+            sendErrorEvent("Camera access error: " + e.getMessage());
         }
+    }
+
+    private void sendErrorEvent(String message) {
+        Log.e(TAG, "Error: " + message);
+        Map<Object, Object> event = new HashMap<>();
+        event.put("error", message);
+        sendEvent(event);
     }
 
     private void createCaptureSession(Surface ivsSurface) {
@@ -380,151 +553,257 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 Log.e(TAG, "cameraDevice is null, cannot create capture session.");
                 return;
             }
+
+            // Create a capture request for preview
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             captureRequestBuilder.addTarget(ivsSurface);
+
+            // Essential: Set auto-exposure and auto-focus modes
+            captureRequestBuilder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+
+            // Update device rotation before setting orientation
+            updateDeviceRotation();
+            
+            // Set orientation based on sensor and device rotation
+            int rotation = getJpegOrientation();
+            captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, rotation);
+            Log.d(TAG, "Setting JPEG orientation to: " + rotation);
+
+            // Create capture session
             cameraDevice.createCaptureSession(Collections.singletonList(ivsSurface), new CameraCaptureSession.StateCallback() {
                 @Override
                 public void onConfigured(@NonNull CameraCaptureSession session) {
+                    Log.d(TAG, "Capture session configured successfully");
                     captureSession = session;
                     try {
-                        captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                        session.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
+                        // Start the preview
+                        captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
+
+                        // Configure transform for proper aspect ratio - don't apply to ImagePreviewView
+                        // The ImagePreviewView handles orientation internally
+                        
+                        // Notify success
+                        Map<Object, Object> event = new HashMap<>();
+                        event.put("previewState", "READY");
+                        sendEvent(event);
                     } catch (CameraAccessException e) {
                         Log.e(TAG, "Failed to start camera preview.", e);
+                        sendErrorEvent("Failed to start camera preview: " + e.getMessage());
                     }
                 }
 
                 @Override
                 public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                     Log.e(TAG, "CaptureSession Configuration Failed");
+                    sendErrorEvent("Camera configuration failed");
+                }
+
+                @Override
+                public void onClosed(@NonNull CameraCaptureSession session) {
+                    Log.d(TAG, "Capture session closed");
+                    super.onClosed(session);
                 }
             }, mainHandler);
         } catch (CameraAccessException e) {
             Log.e(TAG, "createCaptureSession CameraAccessException", e);
+            sendErrorEvent("Camera access error in createCaptureSession: " + e.getMessage());
+        }
+    }
+
+    // Convert Surface rotation to degrees
+    private int getRotationDegrees(int rotation) {
+        switch (rotation) {
+            case Surface.ROTATION_90: return 90;
+            case Surface.ROTATION_180: return 180;
+            case Surface.ROTATION_270: return 270;
+            default: return 0; // Surface.ROTATION_0
         }
     }
 
     private void startBroadcast() {
         if (broadcastSession != null && broadcastSession.isReady()) {
-            broadcastSession.start(streamUrl, streamKey);
+            try {
+                broadcastSession.start(streamUrl, streamKey);
+                Log.d(TAG, "Broadcast started successfully");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start broadcast", e);
+                sendErrorEvent("Failed to start broadcast: " + e.getMessage());
+            }
         } else {
             Log.w(TAG, "Broadcast session not ready, cannot start.");
+            sendErrorEvent("Broadcast session not ready");
         }
     }
 
     private void stopBroadcast() {
         if (broadcastSession != null) {
-            broadcastSession.stop();
-            broadcastSession.release();
-            broadcastSession = null;
-            Map<Object, Object> event = new HashMap<>();
-            event.put("state", "DISCONNECTED");
-            sendEvent(event);
-            layout.removeAllViews();
+            try {
+                broadcastSession.stop();
+                broadcastSession.release();
+                broadcastSession = null;
+                Map<Object, Object> event = new HashMap<>();
+                event.put("state", "DISCONNECTED");
+                sendEvent(event);
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping broadcast", e);
+            } finally {
+                layout.removeAllViews();
+                releaseCamera();
+            }
+        } else {
+            releaseCamera();
         }
-        releaseCamera();
     }
 
     private void toggleMute() {
         if (audioDevice != null) {
             isMuted = !isMuted;
             audioDevice.setGain(isMuted ? 0.0f : 1.0f);
+            Map<Object, Object> event = new HashMap<>();
+            event.put("audioMuted", isMuted);
+            sendEvent(event);
         }
     }
 
     private void changeCamera(String type) {
-        if (broadcastSession == null || cameraDevice == null) return;
-        CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-        try {
-            String newCameraId = null;
-            for (String cameraId : manager.getCameraIdList()) {
-                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
-                Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                if (lensFacing == null) continue;
-
-                if (type.equals("0") && lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    newCameraId = cameraId;
-                    break;
-                }
-                if (type.equals("1") && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
-                    newCameraId = cameraId;
-                    break;
-                }
-            }
-
-            if (newCameraId != null && !newCameraId.equals(defaultCameraType)) {
-                releaseCamera();
-                defaultCameraType = newCameraId;
-                startCamera2(source.getInputSurface(), layout.getWidth(), layout.getHeight());
-            }
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Failed to change camera.", e);
-        }
-    }
-
-    // **FIX:** Added helper method to choose optimal preview size
-    private Size chooseOptimalSize(Size[] choices, int viewWidth, int viewHeight) {
-        List<Size> bigEnough = new ArrayList<>();
-        List<Size> notBigEnough = new ArrayList<>();
-
-        // Ensure view dimensions are not zero
-        int w = viewWidth > 0 ? viewWidth : 1920; // Default to a common size if view not laid out
-        int h = viewHeight > 0 ? viewHeight : 1080;
-
-        for (Size option : choices) {
-            // Match aspect ratio and size
-            if (option.getWidth() == w && option.getHeight() == h) {
-                return option; // Perfect match
-            }
-            if (option.getHeight() == option.getWidth() * h / w) {
-                if (option.getWidth() >= w && option.getHeight() >= h) {
-                    bigEnough.add(option);
-                } else {
-                    notBigEnough.add(option);
-                }
-            }
+        if (broadcastSession == null || source == null) {
+            Log.e(TAG, "Cannot change camera, session or source is null");
+            return;
         }
 
-        if (!bigEnough.isEmpty()) {
-            return Collections.min(bigEnough, new CompareSizesByArea());
-        } else if (!notBigEnough.isEmpty()) {
-            return Collections.max(notBigEnough, new CompareSizesByArea());
+        // Get current surface
+        Surface ivsSurface = source.getInputSurface();
+
+        // Release current camera first
+        releaseCamera();
+
+        // Set new camera type
+        defaultCameraType = type;
+
+        // Update device rotation when changing camera
+        updateDeviceRotation();
+
+        // Start camera with existing surface
+        if (previewView != null && previewView.getWidth() > 0 && previewView.getHeight() > 0) {
+            startCamera2(ivsSurface, previewView.getWidth(), previewView.getHeight());
         } else {
-            Log.w(TAG, "Couldn't find any suitable preview size, picking first available.");
-            return choices[0];
+            startCamera2(ivsSurface, 1280, 720); // Fallback dimensions
         }
     }
 
-    // **FIX:** Added comparator for size selection
-    static class CompareSizesByArea implements Comparator<Size> {
-        @Override
-        public int compare(Size lhs, Size rhs) {
-            return Long.signum((long) lhs.getWidth() * lhs.getHeight() - (long) rhs.getWidth() * rhs.getHeight());
-        }
-    }
+    // Choose optimal size based on target dimensions and available sizes
+    private Size chooseOptimalSize(Size[] choices, int targetWidth, int targetHeight) {
+        // Ensure we have valid target dimensions
+        final int w = (targetWidth > 0) ? targetWidth : 1280;
+        final int h = (targetHeight > 0) ? targetHeight : 720;
 
+        // Calculate target aspect ratio
+        final double targetRatio = (double) w / h;
+
+        Log.d(TAG, "Target dimensions: " + w + "x" + h + ", ratio: " + targetRatio);
+
+        // Convert to list for easier manipulation
+        List<Size> suitableSizes = new ArrayList<>(Arrays.asList(choices));
+
+        // Filter out sizes that are too small or too large
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            suitableSizes.removeIf(size ->
+                    size.getWidth() < 480 || size.getHeight() < 320 ||
+                            size.getWidth() > 3840 || size.getHeight() > 2160
+            );
+        }
+
+        if (suitableSizes.isEmpty()) {
+            Log.w(TAG, "No suitable sizes found, using first available");
+            return choices.length > 0 ? choices[0] : new Size(1280, 720);
+        }
+
+        // Sort by aspect ratio match first, then by resolution preference
+        Collections.sort(suitableSizes, (a, b) -> {
+            double aRatio = (double) a.getWidth() / a.getHeight();
+            double bRatio = (double) b.getWidth() / b.getHeight();
+            double ratioDiffA = Math.abs(aRatio - targetRatio);
+            double ratioDiffB = Math.abs(bRatio - targetRatio);
+
+            // If aspect ratios are similar (within 10%), prefer higher resolution
+            if (Math.abs(ratioDiffA - ratioDiffB) < 0.1) {
+                int aArea = a.getWidth() * a.getHeight();
+                int bArea = b.getWidth() * b.getHeight();
+
+                // Prefer sizes closer to target area but not too much larger
+                int targetArea = w * h;
+                int aDiff = Math.abs(aArea - targetArea);
+                int bDiff = Math.abs(bArea - targetArea);
+
+                return Integer.compare(aDiff, bDiff);
+            } else {
+                // Choose closer aspect ratio
+                return Double.compare(ratioDiffA, ratioDiffB);
+            }
+        });
+
+        // Log available sizes for debugging
+        for (Size size : suitableSizes) {
+            double ratio = (double) size.getWidth() / size.getHeight();
+            Log.d(TAG, "Available size: " + size.getWidth() + "x" + size.getHeight() +
+                    " (ratio: " + String.format("%.2f", ratio) + ")");
+        }
+
+        // Select the best match
+        Size bestSize = suitableSizes.get(0);
+        double bestRatio = (double) bestSize.getWidth() / bestSize.getHeight();
+
+        Log.d(TAG, "Selected camera size: " + bestSize.getWidth() + "x" + bestSize.getHeight() +
+                " (ratio: " + String.format("%.2f", bestRatio) +
+                ", target ratio: " + String.format("%.2f", targetRatio) + ")");
+
+        return bestSize;
+    }
 
     private BroadcastConfiguration getConfig(String quality) {
-        BroadcastConfiguration config = Presets.Configuration.STANDARD_PORTRAIT;
+        // Create configuration that matches the aspect ratio we want
+        BroadcastConfiguration config = new BroadcastConfiguration();
+
+        // Set video configuration based on quality - Portrait orientation for mobile apps
         switch (quality) {
             case "360":
-                // config.video.setSize(640, 360);
-                config.video.setSize(360,640);
-                config.video.setInitialBitrate(800000);
+                config.video.setSize(360, 640); // Portrait
+                config.video.setInitialBitrate(800_000);
+                config.video.setMaxBitrate(1_200_000);
+                config.video.setMinBitrate(400_000);
                 break;
             case "720":
-                // config.video.setSize(1280, 720);
-                config.video.setSize(720,1280);
-                config.video.setInitialBitrate(2500000);
+                config.video.setSize(720, 1280); // Portrait
+                config.video.setInitialBitrate(2_500_000);
+                config.video.setMaxBitrate(3_500_000);
+                config.video.setMinBitrate(1_500_000);
                 break;
             case "1080":
             default:
-                // config.video.setSize(1920, 1080);
-                config.video.setSize(1080,1920);
-                config.video.setInitialBitrate(5000000);
+                config.video.setSize(1080, 1920); // Portrait
+                config.video.setInitialBitrate(5_000_000);
+                config.video.setMaxBitrate(6_000_000);
+                config.video.setMinBitrate(3_000_000);
                 break;
         }
+
+        // Set frame rate
+        config.video.setTargetFramerate(30);
+
+        // Set audio
+        config.audio.setBitrate(128_000);
+        config.audio.setChannels(2);
+
         return config;
+    }
+
+    /**
+     * Creates a broadcast configuration similar to the Swift implementation
+     */
+    private BroadcastConfiguration getPortraitConfig(String quality) {
+        return getConfig(quality);
     }
 
     private final BroadcastSession.Listener broadcastListener = new BroadcastSession.Listener() {
@@ -542,7 +821,13 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
             sendEvent(event);
         }
 
-        // Other listener methods...
+        @Override
+        public void onTransmissionStatsChanged(@NonNull TransmissionStats statistics) {
+            // Send stats periodically if needed
+            Map<Object, Object> event = new HashMap<>();
+            event.put("health", statistics.networkHealth.name());
+            sendEvent(event);
+        }
     };
 
     @Override
@@ -557,20 +842,24 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
 
     private void sendEvent(Map<Object, Object> event) {
         if (eventSink != null) {
-            Log.d(TAG, "Sending Event: " + event.toString());
             mainHandler.post(() -> eventSink.success(new Gson().toJson(event)));
         }
     }
 
     private void releaseCamera() {
-        if (captureSession != null) {
-            captureSession.close();
-            captureSession = null;
+        try {
+            if (captureSession != null) {
+                captureSession.close();
+                captureSession = null;
+            }
+            if (cameraDevice != null) {
+                cameraDevice.close();
+                cameraDevice = null;
+            }
+            captureRequestBuilder = null;
+            cameraOutputSize = null;
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing camera", e);
         }
-        if (cameraDevice != null) {
-            cameraDevice.close();
-            cameraDevice = null;
-        }
-        captureRequestBuilder = null;
     }
 }
