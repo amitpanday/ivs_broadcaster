@@ -57,10 +57,10 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeRight,
-      DeviceOrientation.landscapeLeft,
-    ]);
+    // SystemChrome.setPreferredOrientations([
+    //   DeviceOrientation.landscapeRight,
+    //   DeviceOrientation.landscapeLeft,
+    // ]);
     ivsBroadcaster = IvsBroadcaster.instance;
     ivsBroadcaster!.broadcastState.stream.listen((event) {
       log(event.name.toString(), name: "IVS Broadcaster");

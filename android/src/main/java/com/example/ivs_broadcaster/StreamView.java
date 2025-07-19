@@ -508,16 +508,19 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         BroadcastConfiguration config = Presets.Configuration.STANDARD_PORTRAIT;
         switch (quality) {
             case "360":
-                config.video.setSize(640, 360);
+                // config.video.setSize(640, 360);
+                config.video.setSize(360,640);
                 config.video.setInitialBitrate(800000);
                 break;
             case "720":
-                config.video.setSize(1280, 720);
+                // config.video.setSize(1280, 720);
+                config.video.setSize(720,1280);
                 config.video.setInitialBitrate(2500000);
                 break;
             case "1080":
             default:
-                config.video.setSize(1920, 1080);
+                // config.video.setSize(1920, 1080);
+                config.video.setSize(1080,1920);
                 config.video.setInitialBitrate(5000000);
                 break;
         }
