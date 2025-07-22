@@ -44,6 +44,7 @@ class _HomePageState extends State<HomePage> {
   ValueNotifier<bool> showBox = ValueNotifier(false);
   Timer? timer;
   String url = "rtmps://7453a0e95db4.global-contribute.live-video.net:443/app/";
+  CameraType currentCameraType = CameraType.FRONT;
 
   @override
   void dispose() {
@@ -161,7 +162,12 @@ class _HomePageState extends State<HomePage> {
           ),
           IconButton(
             onPressed: () {
-              ivsBroadcaster?.changeCamera(CameraType.FRONT);
+              if (currentCameraType == CameraType.FRONT) {
+                currentCameraType = CameraType.BACK;
+              } else {
+                currentCameraType = CameraType.FRONT;
+              }
+              ivsBroadcaster?.changeCamera(currentCameraType);
             },
             icon: const Icon(Icons.cameraswitch_rounded),
           ),
