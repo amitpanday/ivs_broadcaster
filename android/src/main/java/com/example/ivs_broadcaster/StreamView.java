@@ -334,7 +334,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 broadcastSession.attachDevice(desc, device -> {
                     LinearLayout previewHolder =  layout;
                     currentCamera =  device.getDescriptor();
-                    ImagePreviewView preview = ((ImageDevice)device).getPreviewView();
+                    ImagePreviewView preview = ((ImageDevice)device).getPreviewView(BroadcastConfiguration.AspectMode.FILL);
                     preview.setLayoutParams(new LinearLayout.LayoutParams(
                             LinearLayout.LayoutParams.MATCH_PARENT,
                             LinearLayout.LayoutParams.MATCH_PARENT));
@@ -472,7 +472,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 setImagePreviewView(null);
                 broadcastSession.exchangeDevices(currentCamera, device, camera -> {
                     // Set the preview view for the new device.
-                    setImagePreviewView(((ImageDevice)camera).getPreviewView());
+                    setImagePreviewView(((ImageDevice)camera).getPreviewView(BroadcastConfiguration.AspectMode.FILL));
                     currentCamera = camera.getDescriptor();
                 });
                 break;
@@ -563,21 +563,21 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
 
     private BroadcastConfiguration getConfig(String quality) {
         BroadcastConfiguration config = Presets.Configuration.STANDARD_PORTRAIT;
-        switch (quality) {
-            case "360":
-                config.video.setSize(640, 360);
-                config.video.setInitialBitrate(800000);
-                break;
-            case "720":
-                config.video.setSize(1280, 720);
-                config.video.setInitialBitrate(2500000);
-                break;
-            case "1080":
-            default:
-                config.video.setSize(1920, 1080);
-                config.video.setInitialBitrate(5000000);
-                break;
-        }
+        // switch (quality) {
+        //     case "360":
+        //         config.video.setSize(640, 360);
+        //         config.video.setInitialBitrate(800000);
+        //         break;
+        //     case "720":
+        //         config.video.setSize(1280, 720);
+        //         config.video.setInitialBitrate(2500000);
+        //         break;
+        //     case "1080":
+        //     default:
+        //         config.video.setSize(1920, 1080);
+        //         config.video.setInitialBitrate(5000000);
+        //         break;
+        // }
         return config;
     }
 
