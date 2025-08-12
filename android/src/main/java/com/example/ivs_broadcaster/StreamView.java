@@ -443,9 +443,8 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     private  void changeCamera(String type) {
         defaultCameraType = CameraType.fromValue(type);
         CameraType cameraType = CameraType.fromValue(type);
-
-        if (cameraType != null && surfaceProvider != null) {
-            surfaceProvider.setMirror(cameraType == CameraType.FRONT);
+        Log.d(TAG, "changeCamera: " + cameraType);
+        if (cameraType != null  ) {
             ProcessCameraProvider cameraProvider = null;
             try {
                 cameraProvider = cameraProviderFuture.get();
@@ -608,8 +607,8 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
 }
 
 enum CameraType {
-    FRONT("1"),
-    BACK("0");
+    FRONT("0"),
+    BACK("1");
 
     private final String value;
 
