@@ -1,36 +1,33 @@
 package com.example.ivs_broadcaster;
 
 
-import android.Manifest;
-import android.app.Activity;
+import android.annotation.SuppressLint;
 import android.content.Context;
-import android.content.pm.PackageManager;
-import android.graphics.Matrix;
-import android.graphics.Point;
-import android.graphics.Rect;
-import android.graphics.SurfaceTexture;
-import android.hardware.camera2.CameraAccessException;
-import android.hardware.camera2.CameraCaptureSession;
-import android.hardware.camera2.CameraCharacteristics;
-import android.hardware.camera2.CameraDevice;
-import android.hardware.camera2.CameraManager;
-import android.hardware.camera2.CameraMetadata;
-import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.params.MeteringRectangle;
-import android.hardware.camera2.params.StreamConfigurationMap;
-import android.os.Build;
+import android.content.pm.ActivityInfo;
+import android.graphics.Bitmap;
+import android.media.Image;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Size;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
-import androidx.core.app.ActivityCompat;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.core.content.ContextCompat;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.LifecycleRegistry;
 
 import com.amazonaws.ivs.broadcast.AudioDevice;
 import com.amazonaws.ivs.broadcast.BroadcastConfiguration;
@@ -38,72 +35,42 @@ import com.amazonaws.ivs.broadcast.BroadcastException;
 import com.amazonaws.ivs.broadcast.BroadcastSession;
 import com.amazonaws.ivs.broadcast.Device;
 import com.amazonaws.ivs.broadcast.ImageDevice;
-import com.amazonaws.ivs.broadcast.ImagePreviewView;
 import com.amazonaws.ivs.broadcast.Presets;
 import com.amazonaws.ivs.broadcast.SurfaceSource;
-import com.amazonaws.ivs.broadcast.TransmissionStats;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.gson.Gson;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 
+import ai.deepar.ar.ARErrorType;
+import ai.deepar.ar.AREventListener;
+import ai.deepar.ar.CameraResolutionPreset;
+import ai.deepar.ar.DeepAR;
+import ai.deepar.ar.DeepARImageFormat;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.platform.PlatformView;
 
-public class StreamView implements PlatformView, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
+public class StreamView implements PlatformView, MethodChannel.MethodCallHandler, EventChannel.StreamHandler, AREventListener, LifecycleOwner {
 
     private static final String TAG = "StreamView";
-    private final LinearLayout layout;
-    private EventChannel.EventSink eventSink;
-    private BroadcastSession broadcastSession;
-    private AudioDevice audioDevice;
-    private final Context context;
-    private final Handler mainHandler;
-    private CameraDevice cameraDevice;
-    private CameraCaptureSession captureSession;
-    private CaptureRequest.Builder captureRequestBuilder;
-    private String defaultCameraType = "0"; // Default to rear camera
 
-    private boolean isMuted = false;
+    // Constants
+    private static final int NUMBER_OF_BUFFERS = 2;
+    private static final boolean useExternalCameraTexture = false;
 
-    StreamView(Context context, BinaryMessenger messenger) {
-        this.context = context;
-        layout = new LinearLayout(context);
-        mainHandler = new Handler(Looper.getMainLooper());
+    // Lifecycle
+    private LifecycleRegistry lifecycleRegistry;
 
-        MethodChannel methodChannel = new MethodChannel(messenger, "ivs_broadcaster");
-        EventChannel eventChannel = new EventChannel(messenger, "ivs_broadcaster_event");
-
-        methodChannel.setMethodCallHandler(this);
-        eventChannel.setStreamHandler(this);
-        layout.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                setFocusPoint(event, layout);
-            }
-            return true;
-        });
-    }
-
-    @Override
-    public View getView() {
-        return layout;
-    }
-
-    @Override
-    public void dispose() {
-        stopBroadcast();
-        releaseCamera();
-    }
-
-    // --- Method Names and Argument Keys ---
+    // Flutter method names
     private static final String METHOD_START_PREVIEW = "startPreview";
     private static final String METHOD_START_BROADCAST = "startBroadcast";
     private static final String METHOD_GET_CAMERA_ZOOM_FACTOR = "getCameraZoomFactor";
@@ -118,7 +85,9 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     private static final String METHOD_CAPTURE_VIDEO = "captureVideo";
     private static final String METHOD_STOP_VIDEO_CAPTURE = "stopVideoCapture";
     private static final String METHOD_SEND_TIME_METADATA = "sendTimeMetaData";
+    private static final String METHOD_SWITCH_EFFECT = "switchEffect"; // New for Flutter control
 
+    // Argument keys
     private static final String ARG_IMGSET = "imgset";
     private static final String ARG_STREAM_KEY = "streamKey";
     private static final String ARG_QUALITY = "quality";
@@ -127,8 +96,372 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     private static final String ARG_LENS = "lens";
     private static final String ARG_TYPE = "type";
     private static final String ARG_SECONDS = "seconds";
+    private static final String ARG_EFFECT = "effect"; // New for Flutter effect switching
+
+    // UI & context
+    private final LinearLayout layout;
+    private final Context context;
+    private final Handler mainHandler;
+
+    // DeepAR
+    private DeepAR deepAR;
+    private ArrayList<String> effects;
+
+    // Camera
+    private CameraType defaultCameraType = CameraType.FRONT;
+    private ARSurfaceProvider surfaceProvider = null;
+    private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
+    private ByteBuffer[] buffers;
+    private int currentBuffer = 0;
+
+    // Broadcast
+    private BroadcastSession broadcastSession;
+    private AudioDevice audioDevice;
+    private boolean isMuted = false;
+    private SurfaceSource surfaceSource;
+    private Surface surface;
+    private String streamUrl;
+    private String streamKey;
+    private String quality;
+    private Boolean autoReconnect;
+    private Device.Descriptor currentCamera;
+    private int width;
+    private int height;
+
+    // Event handling
+    private EventChannel.EventSink eventSink;
+
+    @SuppressLint("ClickableViewAccessibility")
+    StreamView(Context context, BinaryMessenger messenger) {
+        this.context = context;
+        layout = new LinearLayout(context);
+        mainHandler = new Handler(Looper.getMainLooper());
+
+        // Initialize lifecycle
+        lifecycleRegistry = new LifecycleRegistry(this);
+        lifecycleRegistry.setCurrentState(Lifecycle.State.CREATED);
+
+        MethodChannel methodChannel = new MethodChannel(messenger, "ivs_broadcaster");
+        EventChannel eventChannel = new EventChannel(messenger, "ivs_broadcaster_event");
+
+        methodChannel.setMethodCallHandler(this);
+        eventChannel.setStreamHandler(this);
+
+        layout.setOnTouchListener((v, event) -> {
+//            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+//                // TODO: setFocusPoint(event, layout);
+//            }
+            return true;
+        });
+
+        initializeFilters();
+        initializeDeepAR();
+        
+        // Set lifecycle to STARTED
+        lifecycleRegistry.setCurrentState(Lifecycle.State.STARTED);
+    }
+
+    /* -----------------------------
+     * DeepAR & Filters
+     * ----------------------------- */
+    private void initializeDeepAR() {
+        deepAR = new DeepAR(context);
+        deepAR.setLicenseKey("427ca0498f77f9bd52869ed79f841ff5b27a693b9409b6621083e588b820547adad3d3b51db1f68f");
+        deepAR.initialize(context, this);
+        setupCamera();
+    }
+
+    private void initializeFilters() {
+        effects = new ArrayList<>();
+        effects.add("none");
+        effects.add("aviators.deepar");
+        effects.add("bigmouth.deepar");
+        effects.add("dalmatian.deepar");
+        effects.add("flowers.deepar");
+        effects.add("koala.deepar");
+        effects.add("lion.deepar");
+        effects.add("smallface.deepar");
+        effects.add("teddycigar.deepar");
+        effects.add("background_segmentation.deepar");
+        effects.add("tripleface.deepar");
+        effects.add("sleepingmask.deepar");
+        effects.add("fatify.deepar");
+        effects.add("mudmask.deepar");
+        effects.add("pug.deepar");
+        effects.add("twistedface.deepar");
+        effects.add("grumpycat.deepar");
+        effects.add("Helmet_PBR_V1.deepar");
+    }
+
+    private String getFilterPath(String filterName) {
+        if (filterName.equals("none")) {
+            return null;
+        }
+        return "file:///android_asset/" + filterName;
+    }
+
+    private void switchEffect(String effectName) {
+        if (deepAR != null) {
+            deepAR.switchEffect("effect", getFilterPath(effectName));
+            Log.d(TAG, "Switched effect to: " + effectName);
+        }
+    }
+
+    /* -----------------------------
+     * Camera Setup
+     * ----------------------------- */
+    private void setupCamera() {
+        cameraProviderFuture = ProcessCameraProvider.getInstance(context);
+        cameraProviderFuture.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                    bindImageAnalysis(cameraProvider);
+                } catch (ExecutionException | InterruptedException e) {
+                    Log.e(TAG, "Use case binding failed", e);
+                }
+            }
+        }, ContextCompat.getMainExecutor(context));
+    }
 
 
+    private int getScreenOrientation() {
+        WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        int rotation = windowManager.getDefaultDisplay().getRotation();
+        DisplayMetrics dm = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getMetrics(dm);
+        width = dm.widthPixels;
+        height = dm.heightPixels;
+        int orientation;
+        // if the device's natural orientation is portrait:
+        if ((rotation == Surface.ROTATION_0
+                || rotation == Surface.ROTATION_180) && height > width ||
+                (rotation == Surface.ROTATION_90
+                        || rotation == Surface.ROTATION_270) && width > height) {
+            switch(rotation) {
+                case Surface.ROTATION_90:
+                    orientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+                    break;
+                case Surface.ROTATION_180:
+                    orientation =
+                            ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+                    break;
+                case Surface.ROTATION_270:
+                    orientation =
+                            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+                    break;
+                default:
+                    orientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+                    break;
+            }
+        }
+        // if the device's natural orientation is landscape or if the device
+        // is square:
+        else {
+            switch(rotation) {
+                case Surface.ROTATION_90:
+                    orientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+                    break;
+                case Surface.ROTATION_180:
+                    orientation =
+                            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+                    break;
+                case Surface.ROTATION_270:
+                    orientation =
+                            ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+                    break;
+                default:
+                    orientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+                    break;
+            }
+        }
+
+        return orientation;
+    }
+
+    private void bindImageAnalysis(@NonNull ProcessCameraProvider cameraProvider) {
+        CameraResolutionPreset cameraResolutionPreset = CameraResolutionPreset.P1920x1080;
+        int width;
+        int height;
+        int orientation = getScreenOrientation();
+        if (orientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE || orientation ==ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE){
+            width = cameraResolutionPreset.getWidth();
+            height =  cameraResolutionPreset.getHeight();
+        } else {
+            width = cameraResolutionPreset.getHeight();
+            height = cameraResolutionPreset.getWidth();
+        }
+
+        Size cameraResolution = new Size(width, height);
+        CameraSelector cameraSelector = new CameraSelector.Builder().requireLensFacing(CameraType.fromValue(defaultCameraType)).build();
+
+        if(useExternalCameraTexture) {
+            Preview preview = new Preview.Builder()
+                    .setTargetResolution(cameraResolution)
+                    .build();
+
+            cameraProvider.unbindAll();
+            cameraProvider.bindToLifecycle(this, cameraSelector, preview);
+            if(surfaceProvider == null) {
+                surfaceProvider = new ARSurfaceProvider(context, deepAR);
+            }
+            preview.setSurfaceProvider(surfaceProvider);
+            surfaceProvider.setMirror(defaultCameraType == CameraType.FRONT);
+        } else {
+            buffers = new ByteBuffer[NUMBER_OF_BUFFERS];
+            for (int i = 0; i < NUMBER_OF_BUFFERS; i++) {
+                buffers[i] = ByteBuffer.allocateDirect(width * height * 4);
+                buffers[i].order(ByteOrder.nativeOrder());
+                buffers[i].position(0);
+            }
+
+            ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .setTargetResolution(cameraResolution)
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build();
+            imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(context), imageAnalyzer);
+            cameraProvider.unbindAll();
+            cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
+        }
+    }
+
+    private ImageAnalysis.Analyzer imageAnalyzer = new ImageAnalysis.Analyzer() {
+        @Override
+        public void analyze(@NonNull ImageProxy image) {
+            ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+            buffer.rewind();
+            buffers[currentBuffer].put(buffer);
+            buffers[currentBuffer].position(0);
+            if (deepAR != null) {
+                deepAR.receiveFrame(buffers[currentBuffer],
+                        image.getWidth(), image.getHeight(),
+                        image.getImageInfo().getRotationDegrees(),
+                        true,
+                        DeepARImageFormat.RGBA_8888,
+                        image.getPlanes()[0].getPixelStride()
+                );
+            }
+            currentBuffer = (currentBuffer + 1) % NUMBER_OF_BUFFERS;
+            image.close();
+        }
+    };
+
+    /* -----------------------------
+     * Broadcast Management
+     * ----------------------------- */
+    private void startPreview(String url, String key, String quality, Boolean autoReconnect) {
+        this.streamUrl = url;
+        this.streamKey = key;
+        this.autoReconnect = autoReconnect;
+        this.quality = quality;
+        BroadcastConfiguration config = Presets.Configuration.STANDARD_PORTRAIT;
+        config.mixer.slots =  new BroadcastConfiguration.Mixer.Slot[] {
+                BroadcastConfiguration.Mixer.Slot.with(slot -> {
+                    slot.setPreferredAudioInput(Device.Descriptor.DeviceType.MICROPHONE);
+                    slot.setPreferredVideoInput(Device.Descriptor.DeviceType.USER_IMAGE);
+                    slot.setName("custom");
+                    return slot;
+                }),
+        };
+        config.autoReconnect.setEnabled(autoReconnect);
+        broadcastSession = new BroadcastSession(context, broadcastListener, config, Presets.Devices.MICROPHONE(context));
+        for (Device device : broadcastSession.listAttachedDevices()) {
+            if (device.getDescriptor().type == Device.Descriptor.DeviceType.MICROPHONE) {
+                audioDevice = (AudioDevice) device;
+            }
+        }
+        surfaceSource = broadcastSession.createImageInputSource();
+        surfaceSource.setRotation(ImageDevice.Rotation.ROTATION_0);
+        surface = surfaceSource.getInputSurface();
+        broadcastSession.getMixer().bind(surfaceSource, "custom");
+        deepAR.setRenderSurface(surface, 720, 1280);
+        TextureView view = broadcastSession.getPreviewView(BroadcastConfiguration.AspectMode.FILL);
+        setImagePreviewView(view);
+    }
+
+    private void startBroadcast() {
+        if (broadcastSession != null && broadcastSession.isReady()) {
+            broadcastSession.start(streamUrl, streamKey);
+        } else {
+            Log.w(TAG, "Broadcast session not ready, cannot start.");
+        }
+    }
+
+    private void stopBroadcast() {
+        if (broadcastSession != null) {
+            broadcastSession.stop();
+            broadcastSession.release();
+            broadcastSession = null;
+            Map<Object, Object> event = new HashMap<>();
+            event.put("state", "DISCONNECTED");
+            sendEvent(event);
+            layout.removeAllViews();
+        }
+    }
+
+    private void setImagePreviewView(View preview) {
+        if (preview == null){
+            layout.removeAllViews();
+            return;
+        }
+        layout.removeAllViews();
+        preview.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        layout.addView(preview);
+    }
+
+    private void toggleMute() {
+        if (audioDevice != null) {
+            isMuted = !isMuted;
+            audioDevice.setGain(isMuted ? 0.0f : 1.0f);
+        }
+    }
+
+    /* -----------------------------
+     * TODO: To Be Implemented
+     * ----------------------------- */
+    private float getCameraZoomFactor() {
+        // TODO: Implement camera zoom factor retrieval
+        return 1.0f;
+    }
+
+    private void zoomCamera(float zoomLevel) {
+        // TODO: Implement camera zoom control
+    }
+
+    private void setFocusMode(String mode) {
+
+    }
+
+    private void sendMetaData(String metadata) {
+        broadcastSession.sendTimedMetadata(metadata);
+    }
+
+    private  void changeCamera(String type) {
+        defaultCameraType = CameraType.fromValue(type);
+        CameraType cameraType = CameraType.fromValue(type);
+
+        if (cameraType != null && surfaceProvider != null) {
+            surfaceProvider.setMirror(cameraType == CameraType.FRONT);
+            ProcessCameraProvider cameraProvider = null;
+            try {
+                cameraProvider = cameraProviderFuture.get();
+                cameraProvider.unbindAll();
+                bindImageAnalysis(cameraProvider);
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e(TAG, "Error changing camera", e);
+            }
+        } else {
+            Log.w(TAG, "Invalid camera type: " + type);
+        }
+    }
+
+    /* -----------------------------
+     * Method Call Handler
+     * ----------------------------- */
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
         switch (call.method) {
@@ -152,7 +485,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 result.success(isMuted);
                 break;
             case METHOD_SEND_TIME_METADATA:
-//                sendMetaData(call.argument("metadata"));
+                sendMetaData(call.argument("metadata"));
                 result.success(true);
                 break;
             case METHOD_GET_CAMERA_ZOOM_FACTOR:
@@ -163,12 +496,16 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 result.success(true);
                 break;
             case METHOD_CHANGE_CAMERA:
-                changeCamera(call.argument(ARG_TYPE));
+                changeCamera(Objects.requireNonNull(call.argument(ARG_TYPE)));
                 result.success("Camera Changed");
                 break;
             case METHOD_SET_FOCUS_MODE:
                 setFocusMode(call.argument(ARG_TYPE));
                 result.success(true);
+                break;
+            case METHOD_SWITCH_EFFECT:
+                switchEffect(call.argument(ARG_EFFECT));
+                result.success("Effect Switched");
                 break;
             default:
                 result.notImplemented();
@@ -176,411 +513,83 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         }
     }
 
-    // --- Camera Control Methods ---
-    private void setFocusPoint(MotionEvent event, View previewView) {
-        if (cameraDevice == null || captureRequestBuilder == null) {
-            Log.e(TAG, "No Camera Device Available");
-            return;
+    /* -----------------------------
+     * Event Handling
+     * ----------------------------- */
+    private void sendEvent(Map<Object, Object> event) {
+        if (eventSink != null) {
+            Log.d(TAG, "Sending Event: " + event.toString());
+            mainHandler.post(() -> eventSink.success(new Gson().toJson(event)));
         }
+    }
 
-        Integer currentFocusMode = captureRequestBuilder.get(CaptureRequest.CONTROL_AF_MODE);
-        if (currentFocusMode != null && currentFocusMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) {
-            Log.d(TAG, "Camera is on Continuous Auto Focus. Set it to Auto Focus first.");
-            return;
-        }
+    @Override
+    public void onListen(Object arguments, EventChannel.EventSink events) {
+        this.eventSink = events;
+    }
 
+    @Override
+    public void onCancel(Object arguments) {
+        this.eventSink = null;
+    }
+
+    /* -----------------------------
+     * View Lifecycle
+     * ----------------------------- */
+    @Override
+    public View getView() {
+        return layout;
+    }
+
+    @Override
+    public void dispose() {
+        // Set lifecycle to DESTROYED
+        lifecycleRegistry.setCurrentState(Lifecycle.State.DESTROYED);
+        
+        stopBroadcast();
+        ProcessCameraProvider cameraProvider = null;
         try {
-            CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-            CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraDevice.getId());
-            Rect sensorArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            if (sensorArraySize == null) return;
-
-            // Convert touch coordinates to sensor coordinates.
-            final int y = (int) ((event.getX() / (float) previewView.getWidth()) * (float) sensorArraySize.height());
-            final int x = (int) ((event.getY() / (float) previewView.getHeight()) * (float) sensorArraySize.width());
-            final int halfTouchWidth = 150;
-            final int halfTouchHeight = 150;
-            MeteringRectangle focusArea = new MeteringRectangle(Math.max(x - halfTouchWidth, 0),
-                    Math.max(y - halfTouchHeight, 0),
-                    halfTouchWidth * 2,
-                    halfTouchHeight * 2,
-                    MeteringRectangle.METERING_WEIGHT_MAX - 1);
-
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_REGIONS, new MeteringRectangle[]{focusArea});
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO);
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
-            captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
-
-            Map<Object, Object> data = new HashMap<>();
-            data.put("focusPoint", (event.getX() + "_" + event.getY()));
-            sendEvent(data);
-            Log.d(TAG, "Focus point set at: " + event.getX() + ", " + event.getY());
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Error setting focus point", e);
+            cameraProvider = cameraProviderFuture.get();
+            cameraProvider.unbindAll();
+        } catch (ExecutionException | InterruptedException e) {
+            Log.e(TAG, "Use case binding failed", e);
         }
+        if (surfaceProvider != null) {
+            surfaceProvider.stop();
+            surfaceProvider = null;
+        }
+        deepAR.release();
+        deepAR = null;
     }
 
-    private boolean setFocusMode(String type) {
-        if (cameraDevice == null || captureRequestBuilder == null) return false;
-
-        int focusMode;
-        switch (type) {
-            case "0":
-                focusMode = CaptureRequest.CONTROL_AF_MODE_OFF;
-                break;
-            case "1":
-                focusMode = CaptureRequest.CONTROL_AF_MODE_AUTO;
-                break;
-            case "2":
-                focusMode = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
-                break;
-            default:
-                Log.e(TAG, "Invalid focus mode type");
-                return false;
-        }
-
-        try {
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, focusMode);
-            captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
-            return true;
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Error setting focus mode", e);
-            return false;
-        }
+    /* -----------------------------
+     * LifecycleOwner Implementation
+     * ----------------------------- */
+    @NonNull
+    @Override
+    public Lifecycle getLifecycle() {
+        return lifecycleRegistry;
     }
 
-    private void zoomCamera(Double zoomLevel) {
-        if (cameraDevice == null) return;
-        try {
-            CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-            CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraDevice.getId());
-            Rect sensorArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            Float maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+    /* -----------------------------
+     * DeepAR Callbacks
+     * ----------------------------- */
+    @Override public void screenshotTaken(Bitmap bitmap) {}
+    @Override public void videoRecordingStarted() {}
+    @Override public void videoRecordingFinished() {}
+    @Override public void videoRecordingFailed() {}
+    @Override public void videoRecordingPrepared() {}
+    @Override public void shutdownFinished() {}
+    @Override public void initialized() {}
+    @Override public void faceVisibilityChanged(boolean b) {}
+    @Override public void imageVisibilityChanged(String s, boolean b) {}
+    @Override public void frameAvailable(Image image) {}
+    @Override public void error(ARErrorType arErrorType, String s) {}
+    @Override public void effectSwitched(String s) {}
 
-            if (maxZoom == null || sensorArraySize == null) return;
-
-            if (zoomLevel < 1.0f) zoomLevel = 1.0;
-            if (zoomLevel > maxZoom) zoomLevel = (double) maxZoom;
-
-            int cropWidth = (int) (sensorArraySize.width() / zoomLevel);
-            int cropHeight = (int) (sensorArraySize.height() / zoomLevel);
-            int left = (sensorArraySize.width() - cropWidth) / 2;
-            int top = (sensorArraySize.height() - cropHeight) / 2;
-
-            Rect zoomRect = new Rect(left, top, left + cropWidth, top + cropHeight);
-            captureRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, zoomRect);
-            captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
-
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Error applying zoom", e);
-        }
-    }
-
-    private Map<String, Object> getCameraZoomFactor() {
-        Map<String, Object> zoomData = new HashMap<>();
-        try {
-            CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-            if (cameraManager != null) {
-                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(defaultCameraType);
-                Float maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
-                zoomData.put("minZoom", 1.0f);
-                zoomData.put("maxZoom", maxZoom != null ? maxZoom : 1.0f);
-            }
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Error getting zoom factor", e);
-        }
-        return zoomData;
-    }
-
-    // --- Broadcast Session Management ---
-    private String streamUrl;
-    private String streamKey;
-    private String quality;
-    private Boolean autoReconnect;
-    private SurfaceSource source;
-    private Device.Descriptor currentCamera;
-
-    private void startPreview(String url, String key, String quality, Boolean autoReconnect) {
-        this.streamUrl = url;
-        this.streamKey = key;
-        this.autoReconnect = autoReconnect;
-        this.quality = quality;
-
-        BroadcastConfiguration config = getConfig(quality);
-        config.mixer.slots =  new BroadcastConfiguration.Mixer.Slot[] {
-                BroadcastConfiguration.Mixer.Slot.with(slot -> {
-                    // Do not automatically bind to a source
-                    slot.setPreferredAudioInput(
-                            Device.Descriptor.DeviceType.MICROPHONE);
-                    // Bind to user image if unbound
-                    slot.setPreferredVideoInput(
-                            Device.Descriptor.DeviceType.USER_IMAGE);
-                    slot.setName("custom");
-                    return slot;
-                }),
-        };
-        config.autoReconnect.setEnabled(autoReconnect);
-        broadcastSession = new BroadcastSession(context, broadcastListener, config, Presets.Devices.MICROPHONE(context));
-        for (Device device : broadcastSession.listAttachedDevices()) {
-            if (device.getDescriptor().type == Device.Descriptor.DeviceType.MICROPHONE) {
-                audioDevice = (AudioDevice) device;
-            }
-        }
-//        this.source = broadcastSession.createImageInputSource();
-//        Surface ivsSurface = source.getInputSurface();
-        for(Device.Descriptor desc: BroadcastSession.listAvailableDevices(context)) {
-            if(desc.type == Device.Descriptor.DeviceType.CAMERA &&
-                    desc.position == Device.Descriptor.Position.FRONT) {
-                broadcastSession.attachDevice(desc, device -> {
-                    LinearLayout previewHolder =  layout;
-                    currentCamera =  device.getDescriptor();
-                    ImagePreviewView preview = ((ImageDevice)device).getPreviewView(BroadcastConfiguration.AspectMode.FILL);
-                    preview.setLayoutParams(new LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.MATCH_PARENT));
-                    previewHolder.addView(preview);
-                    // Bind the camera to the mixer slot we created above.
-                    broadcastSession.getMixer().bind(device, "custom");
-                });
-                break;
-            }
-        }
-//        ImagePreviewView preview = broadcastSession.getPreviewView(BroadcastConfiguration.AspectMode.FILL);
-//        preview.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
-//        layout.addView(preview);
-//
-//        // **FIX:** Wait for the preview view to be laid out before starting the camera.
-//        // This ensures we have valid dimensions to choose the correct preview size.
-//        preview.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-//            if (v.getWidth() > 0 && v.getHeight() > 0) {
-//                v.removeOnLayoutChangeListener( (View.OnLayoutChangeListener) v.getTag());
-//                startCamera2(ivsSurface, v.getWidth(), v.getHeight());
-//            }
-//        });
-    }
-
-
-    // **FIX:** Updated to accept view dimensions and use chooseOptimalSize
-    private void startCamera2(Surface ivsSurface, int viewWidth, int viewHeight) {
-        CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-        try {
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions((Activity) context, new String[]{Manifest.permission.CAMERA}, 100);
-                return;
-            }
-
-            CameraCharacteristics characteristics = manager.getCameraCharacteristics(defaultCameraType);
-            StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if (map == null) {
-                Log.e(TAG, "Cannot get stream configuration map.");
-                return;
-            }
-
-            // **FIX:** Robustly choose the best preview size instead of just the first one.
-            Size previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class), viewWidth, viewHeight);
-            Log.i(TAG, "Selected Preview Size: " + previewSize.getWidth() + "x" + previewSize.getHeight());
-
-            manager.openCamera(defaultCameraType, new CameraDevice.StateCallback() {
-                @Override
-                public void onOpened(@NonNull CameraDevice camera) {
-                    cameraDevice = camera;
-                    createCaptureSession(ivsSurface);
-                }
-
-                @Override
-                public void onDisconnected(@NonNull CameraDevice camera) {
-                    camera.close();
-                    cameraDevice = null;
-                }
-
-                @Override
-                public void onError(@NonNull CameraDevice camera, int error) {
-                    camera.close();
-                    cameraDevice = null;
-                    Log.e(TAG, "Camera error: " + error);
-                }
-            }, mainHandler);
-
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Camera access exception: ", e);
-        }
-    }
-
-    private void createCaptureSession(Surface ivsSurface) {
-        try {
-            if (cameraDevice == null) {
-                Log.e(TAG, "cameraDevice is null, cannot create capture session.");
-                return;
-            }
-            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            captureRequestBuilder.addTarget(ivsSurface);
-            cameraDevice.createCaptureSession(Collections.singletonList(ivsSurface), new CameraCaptureSession.StateCallback() {
-                @Override
-                public void onConfigured(@NonNull CameraCaptureSession session) {
-                    captureSession = session;
-                    try {
-                        captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                        session.setRepeatingRequest(captureRequestBuilder.build(), null, mainHandler);
-                    } catch (CameraAccessException e) {
-                        Log.e(TAG, "Failed to start camera preview.", e);
-                    }
-                }
-
-                @Override
-                public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                    Log.e(TAG, "CaptureSession Configuration Failed");
-                }
-            }, mainHandler);
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "createCaptureSession CameraAccessException", e);
-        }
-    }
-
-    private void startBroadcast() {
-        if (broadcastSession != null && broadcastSession.isReady()) {
-            broadcastSession.start(streamUrl, streamKey);
-        } else {
-            Log.w(TAG, "Broadcast session not ready, cannot start.");
-        }
-    }
-
-    private void stopBroadcast() {
-        if (broadcastSession != null) {
-            broadcastSession.stop();
-            broadcastSession.release();
-            broadcastSession = null;
-            Map<Object, Object> event = new HashMap<>();
-            event.put("state", "DISCONNECTED");
-            sendEvent(event);
-            layout.removeAllViews();
-        }
-        releaseCamera();
-    }
-
-    private void toggleMute() {
-        if (audioDevice != null) {
-            isMuted = !isMuted;
-            audioDevice.setGain(isMuted ? 0.0f : 1.0f);
-        }
-    }
-
-    private void changeCamera(String type) {
-        Device.Descriptor.Position position = type.equals("0")? Device.Descriptor.Position.FRONT: Device.Descriptor.Position.BACK;
-        for(Device.Descriptor device: BroadcastSession.listAvailableDevices(context)) {
-            if(device.type == Device.Descriptor.DeviceType.CAMERA &&
-                    device.position == position) {
-                setImagePreviewView(null);
-                broadcastSession.exchangeDevices(currentCamera, device, camera -> {
-                    // Set the preview view for the new device.
-                    setImagePreviewView(((ImageDevice)camera).getPreviewView(BroadcastConfiguration.AspectMode.FILL));
-                    currentCamera = camera.getDescriptor();
-                });
-                break;
-            }
-        }
-//        if (broadcastSession == null || cameraDevice == null) return;
-//        CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-//        try {
-//            String newCameraId = null;
-//            for (String cameraId : manager.getCameraIdList()) {
-//                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
-//                Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-//                if (lensFacing == null) continue;
-//
-//                if (type.equals("0") && lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
-//                    newCameraId = cameraId;
-//                    break;
-//                }
-//                if (type.equals("1") && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
-//                    newCameraId = cameraId;
-//                    break;
-//                }
-//            }
-//
-//            if (newCameraId != null && !newCameraId.equals(defaultCameraType)) {
-//                releaseCamera();
-//                defaultCameraType = newCameraId;
-//                startCamera2(source.getInputSurface(), layout.getWidth(), layout.getHeight());
-//            }
-//        } catch (CameraAccessException e) {
-//            Log.e(TAG, "Failed to change camera.", e);
-//        }
-    }
-
-    private void setImagePreviewView(ImagePreviewView preview) {
-        if (preview == null){
-            layout.removeAllViews();
-            return;
-        }
-        layout.removeAllViews();
-        preview.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT));
-        layout.addView(preview);
-    }
-
-    // **FIX:** Added helper method to choose optimal preview size
-    private Size chooseOptimalSize(Size[] choices, int viewWidth, int viewHeight) {
-        List<Size> bigEnough = new ArrayList<>();
-        List<Size> notBigEnough = new ArrayList<>();
-
-        // Ensure view dimensions are not zero
-        int w = viewWidth > 0 ? viewWidth : 1920; // Default to a common size if view not laid out
-        int h = viewHeight > 0 ? viewHeight : 1080;
-
-        for (Size option : choices) {
-            // Match aspect ratio and size
-            if (option.getWidth() == w && option.getHeight() == h) {
-                return option; // Perfect match
-            }
-            if (option.getHeight() == option.getWidth() * h / w) {
-                if (option.getWidth() >= w && option.getHeight() >= h) {
-                    bigEnough.add(option);
-                } else {
-                    notBigEnough.add(option);
-                }
-            }
-        }
-
-        if (!bigEnough.isEmpty()) {
-            return Collections.min(bigEnough, new CompareSizesByArea());
-        } else if (!notBigEnough.isEmpty()) {
-            return Collections.max(notBigEnough, new CompareSizesByArea());
-        } else {
-            Log.w(TAG, "Couldn't find any suitable preview size, picking first available.");
-            return choices[0];
-        }
-    }
-
-    // **FIX:** Added comparator for size selection
-    static class CompareSizesByArea implements Comparator<Size> {
-        @Override
-        public int compare(Size lhs, Size rhs) {
-            return Long.signum((long) lhs.getWidth() * lhs.getHeight() - (long) rhs.getWidth() * rhs.getHeight());
-        }
-    }
-
-
-    private BroadcastConfiguration getConfig(String quality) {
-        BroadcastConfiguration config = Presets.Configuration.STANDARD_PORTRAIT;
-        // switch (quality) {
-        //     case "360":
-        //         config.video.setSize(640, 360);
-        //         config.video.setInitialBitrate(800000);
-        //         break;
-        //     case "720":
-        //         config.video.setSize(1280, 720);
-        //         config.video.setInitialBitrate(2500000);
-        //         break;
-        //     case "1080":
-        //     default:
-        //         config.video.setSize(1920, 1080);
-        //         config.video.setInitialBitrate(5000000);
-        //         break;
-        // }
-        return config;
-    }
-
+    /* -----------------------------
+     * Broadcast Listener
+     * ----------------------------- */
     private final BroadcastSession.Listener broadcastListener = new BroadcastSession.Listener() {
         @Override
         public void onStateChanged(@NonNull BroadcastSession.State state) {
@@ -595,36 +604,36 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
             event.put("error", exception.getError().name() + ": " + exception.getDetail());
             sendEvent(event);
         }
-
-        // Other listener methods...
     };
+}
 
-    @Override
-    public void onListen(Object arguments, EventChannel.EventSink events) {
-        this.eventSink = events;
+enum CameraType {
+    FRONT("1"),
+    BACK("0");
+
+    private final String value;
+
+    CameraType(String value) {
+        this.value = value;
     }
 
-    @Override
-    public void onCancel(Object arguments) {
-        this.eventSink = null;
+    public String getValue() {
+        return value;
     }
 
-    private void sendEvent(Map<Object, Object> event) {
-        if (eventSink != null) {
-            Log.d(TAG, "Sending Event: " + event.toString());
-            mainHandler.post(() -> eventSink.success(new Gson().toJson(event)));
+    public static CameraType fromValue(String value) {
+        for (CameraType type : values()) {
+            if (type.value.equals(value)) {
+                return type;
+            }
         }
+        return FRONT;
     }
 
-    private void releaseCamera() {
-        if (captureSession != null) {
-            captureSession.close();
-            captureSession = null;
+    public static int fromValue(CameraType type) {
+        if (type == CameraType.FRONT) {
+            return CameraSelector.LENS_FACING_FRONT;
         }
-        if (cameraDevice != null) {
-            cameraDevice.close();
-            cameraDevice = null;
-        }
-        captureRequestBuilder = null;
+        return 1;
     }
 }

@@ -278,4 +278,12 @@ class IvsBroadcaster {
   Future<void> setCameraBrightness(CameraBrightness brightness) async {
     return await broadcater.setCameraBrightness(brightness);
   }
+
+  Future<void> switchEffect(String effectName) async {
+    try {
+      await broadcater.switchEffect(effectName);
+    } catch (e) {
+      throw Exception("$e [Switch Effect]");
+    }
+  }
 }

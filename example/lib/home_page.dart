@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:developer';
+import 'dart:math' show Random;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -45,6 +46,26 @@ class _HomePageState extends State<HomePage> {
   Timer? timer;
   String url = "rtmps://7453a0e95db4.global-contribute.live-video.net:443/app/";
   CameraType currentCameraType = CameraType.FRONT;
+
+  final effectsList = [
+    "aviators",
+    "bigmouth",
+    "dalmatian",
+    "flowers",
+    "koala",
+    "lion",
+    "smallface",
+    "teddycigar",
+    "background_segmentation",
+    "tripleface",
+    "sleepingmask",
+    "fatify",
+    "mudmask",
+    "pug",
+    "twistedface",
+    "grumpycat",
+    "Helmet_PBR_V1",
+  ];
 
   @override
   void dispose() {
@@ -137,8 +158,9 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             onPressed: () async {
-              await ivsBroadcaster
-                  ?.updateCameraLens(IOSCameraLens.UltraWideCamera);
+              await ivsBroadcaster?.switchEffect(
+                "${effectsList[Random().nextInt(effectsList.length)]}.deepar",
+              );
             },
             icon: const Icon(Icons.camera),
           ),

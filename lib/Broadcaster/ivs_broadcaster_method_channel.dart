@@ -290,4 +290,18 @@ class MethodChannelIvsBroadcaster extends IvsBroadcasterPlatform {
       throw Exception("$e [Set Camera Brightness]");
     }
   }
+
+  @override
+  Future<void> switchEffect(String effectName) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        "switchEffect",
+        <String, dynamic>{
+          'effect': effectName,
+        },
+      );
+    } catch (e) {
+      throw Exception("$e [Switch Effect]");
+    }
+  }
 }

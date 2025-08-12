@@ -16,7 +16,9 @@ rootProject.allprojects {
     repositories {
         google()
         mavenCentral()
-        
+        maven {
+            url "https://sdk.developer.deepar.ai/maven-android-repository/releases/"
+        }
     }
 }
 
@@ -31,26 +33,30 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 23
     }
 
     dependencies {
         testImplementation 'junit:junit:4.13.2'
+        //noinspection GradleDependency
         testImplementation 'org.mockito:mockito-core:5.0.0'
-        def camerax_version = "1.2.2"
-        implementation "androidx.camera:camera-core:${camerax_version}"
-        implementation "androidx.camera:camera-camera2:${camerax_version}"
-        implementation "androidx.camera:camera-lifecycle:${camerax_version}"
-        implementation "androidx.camera:camera-video:${camerax_version}"
-
-        implementation "androidx.camera:camera-view:${camerax_version}"
-        implementation "androidx.camera:camera-extensions:${camerax_version}"
-
+        def camerax_version = "1.4.2"
+        implementation 'androidx.camera:camera-core:' + camerax_version
+        implementation 'androidx.camera:camera-camera2:' + camerax_version
+        implementation 'androidx.camera:camera-lifecycle:' + camerax_version
+        implementation 'androidx.camera:camera-video:' + camerax_version
+        implementation 'androidx.camera:camera-view:' + camerax_version
+        implementation 'androidx.camera:camera-extensions:' + camerax_version
         implementation 'com.amazonaws:ivs-broadcast:1.32.1'
         implementation 'com.amazonaws:ivs-player:1.37.0'
+        //noinspection GradleDependency
         implementation 'androidx.appcompat:appcompat:1.6.1'
+        //noinspection GradleDependency
         implementation 'com.google.android.material:material:1.9.0'
+        //noinspection GradleDependency
         implementation 'com.google.code.gson:gson:2.10.1'
+        //noinspection Aligned16KB,GradleDependency
+        implementation 'ai.deepar.ar:DeepAR:5.6.4'
     }
 
     testOptions {
