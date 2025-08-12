@@ -311,7 +311,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
                 BroadcastConfiguration.Mixer.Slot.with(slot -> {
                     // Do not automatically bind to a source
                     slot.setPreferredAudioInput(
-                            Device.Descriptor.DeviceType.UNKNOWN);
+                            Device.Descriptor.DeviceType.MICROPHONE);
                     // Bind to user image if unbound
                     slot.setPreferredVideoInput(
                             Device.Descriptor.DeviceType.USER_IMAGE);
