@@ -166,7 +166,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
      * ----------------------------- */
     private void initializeDeepAR() {
         deepAR = new DeepAR(context);
-        deepAR.setLicenseKey("427ca0498f77f9bd52869ed79f841ff5b27a693b9409b6621083e588b820547adad3d3b51db1f68f");
+        deepAR.setLicenseKey("eb7b033f1a6d9db5256545fdfdf319e32735116df5f7b7040b939486d018ac6c209f074ebe1afdf4");
         deepAR.initialize(context, this);
         setupCamera();
     }
