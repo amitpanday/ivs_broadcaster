@@ -26,6 +26,7 @@ import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
 
@@ -141,6 +142,9 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         lifecycleRegistry = new LifecycleRegistry(this);
         lifecycleRegistry.setCurrentState(Lifecycle.State.CREATED);
 
+        // Add lifecycle observer to monitor app lifecycle changes
+        addLifecycleObserver();
+
         MethodChannel methodChannel = new MethodChannel(messenger, "ivs_broadcaster");
         EventChannel eventChannel = new EventChannel(messenger, "ivs_broadcaster_event");
 
@@ -159,6 +163,74 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
         
         // Set lifecycle to STARTED
         lifecycleRegistry.setCurrentState(Lifecycle.State.STARTED);
+    }
+
+    /* -----------------------------
+     * Lifecycle Management
+     * ----------------------------- */
+    private void addLifecycleObserver() {
+        LifecycleEventObserver observer = (source, event) -> {
+            switch (event) {
+                case ON_CREATE:
+                    Log.d(TAG, "🟢 Android Lifecycle: ON_CREATE - StreamView created");
+                    break;
+                case ON_START:
+                    Log.d(TAG, "🟢 Android Lifecycle: ON_START - StreamView started");
+                    break;
+                case ON_RESUME:
+                    Log.d(TAG, "🟢 Android Lifecycle: ON_RESUME - StreamView resumed, app is active");
+                    onAppResumed();
+                    break;
+                case ON_PAUSE:
+                    Log.d(TAG, "🔴 Android Lifecycle: ON_PAUSE - StreamView paused, app going to background");
+                    onAppPaused();
+                    break;
+                case ON_STOP:
+                    Log.d(TAG, "🔴 Android Lifecycle: ON_STOP - StreamView stopped");
+                    onAppStopped();
+                    break;
+                case ON_DESTROY:
+                    Log.d(TAG, "⚫ Android Lifecycle: ON_DESTROY - StreamView destroyed");
+                    onAppDestroyed();
+                    break;
+                case ON_ANY:
+                    // This gets called for any lifecycle event
+                    break;
+            }
+        };
+        
+        getLifecycle().addObserver(observer);
+    }
+
+    private void onAppResumed() {
+        Log.d(TAG, "📱 App State: RESUMED - Camera and broadcast can operate normally");
+//        Refresh the camera preview again
+         setupCamera();
+    }
+
+    private void onAppPaused() {
+        Log.d(TAG, "📱 App State: PAUSED - Consider pausing camera/broadcast to save resources");
+        // Optionally pause camera to save battery
+        // You might want to pause broadcast here depending on requirements
+    }
+
+    private void onAppStopped() {
+        Log.d(TAG, "📱 App State: STOPPED - App is no longer visible");
+        // Stop camera preview
+        // Consider stopping broadcast or keeping it running in background
+    }
+
+    private void onAppDestroyed() {
+        Log.d(TAG, "📱 App State: DESTROYED - Cleaning up resources");
+        // Clean up all resources
+        if (broadcastSession != null) {
+            try {
+                broadcastSession.stop();
+                Log.d(TAG, "🛑 Broadcast stopped due to app destruction");
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping broadcast on destroy", e);
+            }
+        }
     }
 
     /* -----------------------------

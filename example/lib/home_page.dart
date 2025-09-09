@@ -20,7 +20,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   ValueNotifier<CameraBrightness> cameraBrightness = ValueNotifier(
       CameraBrightness(brightness: 0, minBrightness: 0, maxBrightness: 1));
 
@@ -69,6 +69,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ivsBroadcaster?.stopBroadcast();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -77,8 +78,39 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        log('🟢 HomePage: App RESUMED - Broadcasting can continue normally',
+            name: 'App Lifecycle');
+        break;
+      case AppLifecycleState.inactive:
+        log('🟡 HomePage: App INACTIVE - Broadcasting might be affected',
+            name: 'App Lifecycle');
+        break;
+      case AppLifecycleState.paused:
+        log('🔴 HomePage: App PAUSED - Broadcasting should be paused/stopped',
+            name: 'App Lifecycle');
+        // Optionally pause/stop broadcast when app goes to background
+        // ivsBroadcaster?.stopBroadcast();
+        break;
+      case AppLifecycleState.detached:
+        log('⚫ HomePage: App DETACHED - Cleaning up broadcast resources',
+            name: 'App Lifecycle');
+        ivsBroadcaster?.stopBroadcast();
+        break;
+      case AppLifecycleState.hidden:
+        log('🔵 HomePage: App HIDDEN', name: 'App Lifecycle');
+        break;
+    }
+  }
+
+  @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // SystemChrome.setPreferredOrientations([
     //   DeviceOrientation.landscapeRight,
     //   DeviceOrientation.landscapeLeft,

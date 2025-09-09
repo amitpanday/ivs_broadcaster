@@ -17,7 +17,43 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        print('🟢 App State: RESUMED - App is in foreground and interactive');
+        break;
+      case AppLifecycleState.inactive:
+        print(
+            '🟡 App State: INACTIVE - App is in foreground but not interactive');
+        break;
+      case AppLifecycleState.paused:
+        print('🔴 App State: PAUSED - App is in background');
+        break;
+      case AppLifecycleState.detached:
+        print('⚫ App State: DETACHED - App is being shut down');
+        break;
+      case AppLifecycleState.hidden:
+        print('🔵 App State: HIDDEN - App is hidden');
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
