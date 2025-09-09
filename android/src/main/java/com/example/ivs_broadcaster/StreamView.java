@@ -106,6 +106,7 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     // DeepAR
     private DeepAR deepAR;
     private ArrayList<String> effects;
+    private boolean isDeepARInitialized = false;
 
     // Camera
     private CameraType defaultCameraType = CameraType.FRONT;
@@ -334,7 +335,8 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
             buffer.rewind();
             buffers[currentBuffer].put(buffer);
             buffers[currentBuffer].position(0);
-            if (deepAR != null) {
+            // Check if DeepAR is initialized before calling receiveFrame
+            if (deepAR != null && isDeepARInitialized) {
                 deepAR.receiveFrame(buffers[currentBuffer],
                         image.getWidth(), image.getHeight(),
                         image.getImageInfo().getRotationDegrees(),
@@ -557,8 +559,11 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
             surfaceProvider.stop();
             surfaceProvider = null;
         }
-        deepAR.release();
-        deepAR = null;
+        if (deepAR != null) {
+            deepAR.release();
+            deepAR = null;
+            isDeepARInitialized = false;
+        }
     }
 
     /* -----------------------------
@@ -579,7 +584,12 @@ public class StreamView implements PlatformView, MethodChannel.MethodCallHandler
     @Override public void videoRecordingFailed() {}
     @Override public void videoRecordingPrepared() {}
     @Override public void shutdownFinished() {}
-    @Override public void initialized() {}
+    @Override 
+    public void initialized() {
+        // Set the flag when DeepAR is initialized
+        isDeepARInitialized = true;
+        Log.d(TAG, "DeepAR initialized successfully");
+    }
     @Override public void faceVisibilityChanged(boolean b) {}
     @Override public void imageVisibilityChanged(String s, boolean b) {}
     @Override public void frameAvailable(Image image) {}
